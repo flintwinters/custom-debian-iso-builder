@@ -1,0 +1,21 @@
+{
+  "packages": [
+    "build-essential",
+    "binutils",
+    "python3",
+    "python3-pip",
+    "git",
+    "curl",
+    "wget",
+    "micro",
+    "zsh",
+    "gcc",
+    "avahi-daemon",
+    "nala",
+    "zip"
+  ],
+  "ssh_key": {
+    "type": "ed25519",
+    "user": "user"
+  }
+}
