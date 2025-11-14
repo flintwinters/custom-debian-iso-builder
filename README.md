@@ -42,7 +42,7 @@ Customization is managed through two primary files:
 To create the custom ISO, simply run the script from the project's root directory:
 
 ```bash
-python3 debian_iso_customizer.py create
+sudo python3 debian_iso_customizer.py
 ```
 
 The script will perform all the necessary steps and output the new ISO file as `custom-debian-13.iso`. If a USB drive is connected, it will prompt you to flash the ISO to the drive.
