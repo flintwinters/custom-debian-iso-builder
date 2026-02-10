@@ -1,3 +1,7 @@
+# Zebian Post-Installation and Preseed Configuration
+
+# --- Post-Installation Settings ---
+# Packages to be installed by the post-install script.
 packages:
   - build-essential
   - binutils
@@ -12,6 +16,44 @@ packages:
   - avahi-daemon
   - nala
   - zip
+
+# --- SSH Key Generation ---
+# Automatically generate an SSH key for the specified user.
 ssh_key:
-  type: ed25519
-  user: user
+  type: "ed25519"
+  user: "user"
+
+# --- Preseed Configuration ---
+# Values used to generate the preseed.cfg for unattended installation.
+preseed:
+  # --- Localization ---
+  language: "en"
+  country: "US"
+  locale: "en_US.UTF-8"
+  keyboard_map: "us"
+
+  # --- Network ---
+  domain_name: "local"
+
+  # --- User Account ---
+  # The default user to be created.
+  # Note: The password should be a crypted hash.
+  # To generate: mkpasswd -m sha-512
+  user_fullname: "User"
+  username: "user"
+  crypted_password: "$6$qfs.xL21$1a.fT6T0p5jF.oE5a/T31gS/v4l7b2a.zP2c.Y3a.Z1" # Default: "password"
+  
+  # --- Timezone ---
+  timezone: "UTC"
+  
+  # --- Partitioning ---
+  # `lvm` or `regular`
+  partitioning_method: "lvm"
+  partitioning_size: "max"
+
+  # --- Base Packages ---
+  # Packages to be installed during the initial setup.
+  base_packages:
+    - "curl"
+    - "wget"
+    - "git"

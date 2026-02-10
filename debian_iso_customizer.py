@@ -67,15 +67,77 @@ def _extract_iso():
 
 
 def _create_preseed_config():
-    """Copies the external preseed config into the workspace."""
-    source_preseed_path = PRESEED_FILENAME
-    dest_preseed_path = os.path.join(WORKSPACE_DIR, PRESEED_FILENAME)
-    
-    if not os.path.exists(source_preseed_path):
-        console.print(f"[bold red]Error:[/bold red] Preseed file not found at [yellow]'{source_preseed_path}'[/yellow].")
-        raise typer.Exit(code=1)
-        
-    shutil.copy(source_preseed_path, dest_preseed_path)
+    """Generates the preseed config from the YAML configuration file."""      
+    if not os.path.exists(POST_INSTALL_CONFIG):                               
+        console.print(f"[bold red]Error:[/bold red] Post-install config not at [yellow]'{POST_INSTALL_CONFIG}'[/yellow].")                            
+        raise typer.Exit(code=1)                                              
+                                                                                 
+    with open(POST_INSTALL_CONFIG, "r") as f:                                 
+        config = yaml.safe_load(f).get("preseed", {})                         
+                                                                                 
+    base_packages = " ".join(config.get("base_packages", []))                 
+                                                                                 
+    preseed_content = f"""                                                    
+# --- Localization ---                                                        
+d-i debian-installer/language string {config.get('language', 'en')}           
+d-i debian-installer/country string {config.get('country', 'US')}             
+d-i debian-installer/locale string {config.get('locale', 'en_US.UTF-8')}      
+d-i keyboard-configuration/xkb-keymap select {config.get('keyboard_map', 'us')}                                                                          
+                                                                              
+# --- Network ---                                                             
+d-i netcfg/get_domain string {config.get('domain_name', 'local')}             
+d-i hw-detect/load_firmware boolean true                                      
+                                                                              
+# --- User Account ---                                                        
+d-i passwd/root-login boolean false                                           
+d-i passwd/make-user boolean true                                             
+d-i passwd/user-fullname string {config.get('user_fullname', 'User')}         
+d-i passwd/username string {config.get('username', 'user')}                   
+d-i passwd/user-password-crypted password {config.get('crypted_password')}    
+                                                                              
+# --- Clock and Timezone ---                                                  
+d-i clock-setup/utc boolean true                                              
+d-i time/zone string {config.get('timezone', 'UTC')}                          
+d-i clock-setup/ntp boolean true                                              
+                                                                              
+# --- Partitioning ---                                                        
+d-i partman-auto/method string {config.get('partitioning_method', 'lvm')}     
+d-i partman-auto-lvm/guided_size string {config.get('partitioning_size',      
+'max')}                                                                         
+d-i partman-partitioning/confirm_write_new_label boolean true                 
+d-i partman/choose_partition select finish                                    
+d-i partman/confirm boolean true                                              
+d-i partman/confirm_nooverwrite boolean true                                  
+                                                                              
+# --- APT ---                                                                 
+d-i apt-setup/non-free boolean true                                           
+d-i apt-setup/contrib boolean true                                            
+                                                                              
+# --- Packages ---                                                            
+tasksel tasksel/first multiselect ssh-server                                  
+d-i pkgsel/include string {base_packages}                                     
+d-i pkgsel/upgrade select full-upgrade                                        
+d-i pkgsel/update-policy select unattended-upgrades                           
+                                                                              
+# --- Bootloader ---                                                          
+d-i grub-installer/only_debian boolean true                                   
+                                                                              
+# --- Final Commands ---                                                      
+d-i preseed/late_command string \\
+    cp /cdrom/post_install_setup.sh /target/tmp/post_install_setup.sh; \\     
+    chmod +x /target/tmp/post_install_setup.sh; \\                            
+    in-target /tmp/post_install_setup.sh;                                     
+d-i finish-install/reboot boolean true                                        
+                                                                              
+# --- Automation ---                                                          
+d-i auto-install/enable boolean true                                          
+d-i debian-installer/priority string critical                                 
+d-i debconf/priority string critical                                          
+    """.strip()                                                               
+                                                                              
+    dest_preseed_path = os.path.join(WORKSPACE_DIR, PRESEED_FILENAME)         
+    with open(dest_preseed_path, "w") as f:                                   
+        f.write(preseed_content)  
 
 
 def _update_bootloader_configs():
