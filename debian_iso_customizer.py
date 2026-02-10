@@ -26,6 +26,7 @@ import os
 import subprocess
 import shutil
 import typer
+import yaml
 import json
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -44,7 +45,7 @@ SOURCE_ISO_PATH = "debian-13.0.0-amd64-netinst.iso"
 WORKSPACE_DIR = "iso-extract"
 CUSTOM_ISO_NAME = "custom-debian-13.iso"
 PRESEED_FILENAME = "preseed.cfg"
-POST_INSTALL_CONFIG = "post_install_config.json"
+POST_INSTALL_CONFIG = "post_install_config.yaml"
 
 
 def _verify_prerequisites():
@@ -122,13 +123,13 @@ menuentry 'Automated Unattended Install' --class auto {
 
 
 def _generate_post_install_script():
-    """Generates the post-install script from a JSON config."""
+    """Generates the post-install script from a YAML config."""
     if not os.path.exists(POST_INSTALL_CONFIG):
         console.print(f"[bold red]Error:[/bold red] Post-install config not found at [yellow]'{POST_INSTALL_CONFIG}'[/yellow].")
         raise typer.Exit(code=1)
 
     with open(POST_INSTALL_CONFIG, "r") as f:
-        config = json.load(f)
+        config = yaml.safe_load(f)
 
     packages = " ".join(config.get("packages", []))
     ssh_key_config = config.get("ssh_key", {})
@@ -268,7 +269,7 @@ def create():
 
     with console.status("[bold green]Generating post-install script...[/bold green]"):
         _generate_post_install_script()
-    console.print("SUCCESS: Post-install script generated from JSON config.")
+    console.print("SUCCESS: Post-install script generated from YAML config.")
 
     with console.status("[bold green]Updating bootloader menus...[/bold green]"):
         _update_bootloader_configs()
