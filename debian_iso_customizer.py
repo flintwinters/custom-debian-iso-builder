@@ -97,6 +97,16 @@ def load_post_install_config():
         return yaml.safe_load(f) or {}
 
 
+def package_list(*package_groups):
+    """Returns a deduplicated package string while preserving config order."""
+    packages = []
+    for group in package_groups:
+        for package in group:
+            if package not in packages:
+                packages.append(package)
+    return " ".join(packages)
+
+
 def make_workspace_writable():
     """Adds owner write permissions to the generated extraction workspace."""
     for root, dirs, files in os.walk(WORKSPACE_DIR, topdown=False):
@@ -153,9 +163,17 @@ def remove_existing_custom_iso():
 
 def create_preseed_config():
     """Generates the preseed config from the YAML configuration file."""      
-    config = load_post_install_config().get("preseed", {})                         
+    post_install_config = load_post_install_config()
+    config = post_install_config.get("preseed", {})
+    ssh_key_config = post_install_config.get("ssh_key", {})
+    ssh_user = ssh_key_config.get("user") or config.get("username", "user")
+    ssh_key_type = ssh_key_config.get("type", "ed25519")
+    generated_key_path = f"/home/{ssh_user}/.ssh/id_{ssh_key_type}"
                                                                                  
-    base_packages = " ".join(config.get("base_packages", []))                 
+    packages = package_list(
+        config.get("base_packages", []),
+        post_install_config.get("packages", []),
+    )
                                                                                  
     preseed_content = f"""                                                    
 # --- Localization ---                                                        
@@ -195,7 +213,7 @@ d-i apt-setup/contrib boolean true
                                                                               
 # --- Packages ---                                                            
 tasksel tasksel/first multiselect ssh-server                                  
-d-i pkgsel/include string {base_packages}                                     
+d-i pkgsel/include string {packages}                                          
 d-i pkgsel/upgrade select full-upgrade                                        
 d-i pkgsel/update-policy select unattended-upgrades                           
                                                                               
@@ -204,10 +222,19 @@ d-i grub-installer/only_debian boolean true
                                                                               
 # --- Final Commands ---                                                      
 d-i preseed/late_command string \\
-    cp /cdrom/post_install_setup.sh /target/tmp/post_install_setup.sh; \\     
-    if [ -d /cdrom/{SSH_KEY_STAGING_DIR} ]; then cp -a /cdrom/{SSH_KEY_STAGING_DIR} /target/tmp/{SSH_KEY_STAGING_DIR}; fi; \\
-    chmod +x /target/tmp/post_install_setup.sh; \\                            
-    in-target /tmp/post_install_setup.sh;                                     
+    in-target install -d -m 700 -o {ssh_user} -g {ssh_user} /home/{ssh_user}/.ssh; \\
+    if [ -f /cdrom/{SSH_KEY_STAGING_DIR}/{SSH_PRIVATE_KEY_NAME} ] && [ -f /cdrom/{SSH_KEY_STAGING_DIR}/{SSH_PUBLIC_KEY_NAME} ]; then \\
+        cp /cdrom/{SSH_KEY_STAGING_DIR}/{SSH_PRIVATE_KEY_NAME} /target/home/{ssh_user}/.ssh/{SSH_PRIVATE_KEY_NAME}; \\
+        cp /cdrom/{SSH_KEY_STAGING_DIR}/{SSH_PUBLIC_KEY_NAME} /target/home/{ssh_user}/.ssh/{SSH_PUBLIC_KEY_NAME}; \\
+        in-target chown {ssh_user}:{ssh_user} /home/{ssh_user}/.ssh/{SSH_PRIVATE_KEY_NAME} /home/{ssh_user}/.ssh/{SSH_PUBLIC_KEY_NAME}; \\
+        chmod 600 /target/home/{ssh_user}/.ssh/{SSH_PRIVATE_KEY_NAME}; \\
+        chmod 644 /target/home/{ssh_user}/.ssh/{SSH_PUBLIC_KEY_NAME}; \\
+    elif [ ! -f /target{generated_key_path} ]; then \\
+        in-target ssh-keygen -t {ssh_key_type} -f {generated_key_path} -N ""; \\
+        in-target chown {ssh_user}:{ssh_user} {generated_key_path} {generated_key_path}.pub; \\
+    fi; \\
+    in-target apt-get clean; \\
+    rm -rf /target/var/lib/apt/lists/*;                                     
 d-i finish-install/reboot boolean true                                        
                                                                               
 # --- Automation ---                                                          
@@ -263,49 +290,6 @@ menuentry 'Automated Unattended Install' --class auto {
     modified_grub_content = f'set timeout=1\nset default="0"\n\n{grub_autoinstall_entry}\n\n{original_grub_content}'
     with open(grub_cfg_path, "w") as f:
         f.write(modified_grub_content)
-
-
-def generate_post_install_script():
-    """Generates the post-install script from a YAML config."""
-    config = load_post_install_config()
-
-    packages = " ".join(config.get("packages", []))
-    ssh_key_config = config.get("ssh_key", {})
-    ssh_key_type = ssh_key_config.get("type", "ed25519")
-    ssh_user = ssh_key_config.get("user", "user")
-    generated_key_path = f"/home/{ssh_user}/.ssh/id_{ssh_key_type}"
-
-    script_content = f"""#!/bin/bash
-set -e
-
-# --- Install packages ---
-apt-get update
-apt-get install -y --no-install-recommends {packages}
-
-# --- Configure SSH key ---
-install -d -m 700 -o {ssh_user} -g {ssh_user} /home/{ssh_user}/.ssh
-
-if [ -f /tmp/{SSH_KEY_STAGING_DIR}/{SSH_PRIVATE_KEY_NAME} ] && [ -f /tmp/{SSH_KEY_STAGING_DIR}/{SSH_PUBLIC_KEY_NAME} ]; then
-    install -m 600 -o {ssh_user} -g {ssh_user} /tmp/{SSH_KEY_STAGING_DIR}/{SSH_PRIVATE_KEY_NAME} /home/{ssh_user}/.ssh/{SSH_PRIVATE_KEY_NAME}
-    install -m 644 -o {ssh_user} -g {ssh_user} /tmp/{SSH_KEY_STAGING_DIR}/{SSH_PUBLIC_KEY_NAME} /home/{ssh_user}/.ssh/{SSH_PUBLIC_KEY_NAME}
-    rm -rf /tmp/{SSH_KEY_STAGING_DIR}
-elif [ ! -f {generated_key_path} ]; then
-    sudo -u {ssh_user} ssh-keygen -t {ssh_key_type} -f {generated_key_path} -N ""
-fi
-
-# --- Clean up ---
-apt-get clean
-rm -rf /var/lib/apt/lists/*
-
-echo "Post-installation setup complete."
-"""
-    
-    script_path = os.path.join(WORKSPACE_DIR, "post_install_setup.sh")
-    with open(script_path, "w") as f:
-        f.write(script_content)
-    
-    # Make the script executable
-    os.chmod(script_path, 0o755)
 
 
 def stage_current_user_ssh_keys(ssh_user: str, copy_ssh_keys: Optional[bool] = None):
@@ -541,9 +525,6 @@ def create(
 
     with console.status("[bold green]Generating preseed configuration...[/bold green]"):
         create_preseed_config()
-
-    with console.status("[bold green]Generating post-install script...[/bold green]"):
-        generate_post_install_script()
 
     with console.status("[bold green]Updating bootloader menus...[/bold green]"):
         update_bootloader_configs()
