@@ -39,22 +39,35 @@ preseed:
 
   # --- Network ---
   domain_name: "local"
+  load_firmware: true
 
   # --- User Account ---
   # The default user to be created.
   # Note: The password should be a crypted hash.
   # To generate: mkpasswd -m sha-512
+  root_login: false
+  make_user: true
   user_fullname: "sword"
   username: "sword"
   crypted_password: "$6$qfs.xL21$1a.fT6T0p5jF.oE5a/T31gS/v4l7b2a.zP2c.Y3a.Z1" # Default: "password"
   
   # --- Timezone ---
+  clock_utc: true
   timezone: "UTC"
+  clock_ntp: true
   
   # --- Partitioning ---
   # `lvm` or `regular`
   partitioning_method: "lvm"
   partitioning_size: "max"
+  confirm_write_new_label: true
+  choose_partition: "finish"
+  confirm_partitioning: true
+  confirm_nooverwrite: true
+
+  # --- APT ---
+  apt_non_free: true
+  apt_contrib: true
 
   # --- Base Packages ---
   # Packages to be installed during the initial setup.
@@ -62,3 +75,22 @@ preseed:
     - "curl"
     - "wget"
     - "git"
+
+  # --- Package Selection ---
+  tasks:
+    - "ssh-server"
+  package_upgrade: "full-upgrade"
+  update_policy: "unattended-upgrades"
+
+  # --- Bootloader ---
+  grub_only_debian: true
+  finish_reboot: true
+
+  # --- Automation ---
+  auto_install: true
+  installer_priority: "critical"
+  debconf_priority: "critical"
+
+  # --- Custom Debian Installer Entries ---
+  # Add raw preseed lines here if a custom installer directive is not modeled above.
+  extra: []
