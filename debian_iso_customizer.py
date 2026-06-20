@@ -29,6 +29,7 @@ import typer
 import yaml
 import json
 from pathlib import Path
+from typing import Optional
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -50,6 +51,11 @@ POST_INSTALL_CONFIG = "post_install_config.yaml"
 SSH_KEY_STAGING_DIR = "zebian-ssh"
 SSH_PRIVATE_KEY_NAME = "id_ed25519"
 SSH_PUBLIC_KEY_NAME = "id_ed25519.pub"
+
+
+@app.callback()
+def main():
+    """Create customized Debian installer ISOs."""
 
 
 def _verify_prerequisites():
@@ -237,7 +243,7 @@ echo "Post-installation setup complete."
     os.chmod(script_path, 0o755)
 
 
-def _stage_current_user_ssh_keys(ssh_user: str):
+def _stage_current_user_ssh_keys(ssh_user: str, copy_ssh_keys: Optional[bool] = None):
     """Optionally copies the current user's ed25519 keypair into the ISO workspace."""
     staging_dir = Path(WORKSPACE_DIR) / SSH_KEY_STAGING_DIR
     if staging_dir.exists():
@@ -248,13 +254,19 @@ def _stage_current_user_ssh_keys(ssh_user: str):
     public_key = ssh_dir / SSH_PUBLIC_KEY_NAME
 
     if not private_key.exists() or not public_key.exists():
-        console.print(f"[yellow]No complete SSH keypair found at {private_key} and {public_key}; skipping key import.[/yellow]")
+        message = f"No complete SSH keypair found at {private_key} and {public_key}."
+        if copy_ssh_keys:
+            console.print(f"[bold red]Error:[/bold red] {message}")
+            raise typer.Exit(code=1)
+        console.print(f"[yellow]{message} Skipping key import.[/yellow]")
         return
 
-    should_copy = typer.confirm(
-        f"Copy {private_key} and {public_key} into the ISO for user '{ssh_user}'? This embeds the private key in the ISO.",
-        default=False
-    )
+    should_copy = copy_ssh_keys
+    if should_copy is None:
+        should_copy = typer.confirm(
+            f"Copy {private_key} and {public_key} into the ISO for user '{ssh_user}'? This embeds the private key in the ISO.",
+            default=False
+        )
     if not should_copy:
         console.print("[yellow]SSH key import skipped.[/yellow]")
         return
@@ -297,6 +309,74 @@ def _find_usb_drives():
         return usb_drives
     except (FileNotFoundError, json.JSONDecodeError, subprocess.CalledProcessError):
         return []
+
+
+def _flash_selected_usb_drive(device: str, confirm_flash: Optional[bool] = None):
+    """Flashes a selected USB drive, optionally pre-answering the destructive confirmation."""
+    if confirm_flash is False:
+        console.print("[yellow]Flashing cancelled by command option.[/yellow]")
+        return False
+
+    _flash_usb_drive(device, force=confirm_flash is True)
+    return True
+
+
+def _handle_usb_flashing(
+    flash_usb: Optional[bool] = None,
+    usb_device: Optional[str] = None,
+    confirm_flash: Optional[bool] = None,
+):
+    """Optionally flashes the generated ISO to USB using command options or prompts."""
+    if flash_usb is False:
+        console.print("[yellow]USB flashing skipped.[/yellow]")
+        return
+
+    if usb_device:
+        _flash_selected_usb_drive(usb_device, confirm_flash)
+        return
+
+    usb_drives = _find_usb_drives()
+    if not usb_drives:
+        if flash_usb:
+            console.print("[bold red]Error:[/bold red] No USB drives detected. Provide --usb-device to flash a specific device.")
+            raise typer.Exit(code=1)
+        return
+
+    if len(usb_drives) == 1:
+        selected_drive = usb_drives[0]['name']
+        console.print(f"\n[bold cyan]Detected single USB Drive:[/bold cyan] {selected_drive} ({usb_drives[0]['size']})")
+        should_flash = flash_usb
+        if should_flash is None:
+            should_flash = typer.confirm(f"Do you want to flash the ISO to {selected_drive}?", default=True)
+        if should_flash:
+            did_flash = _flash_selected_usb_drive(selected_drive, confirm_flash if confirm_flash is not None else True)
+            if did_flash:
+                console.print(f"\n[bold green]SUCCESS: ISO successfully flashed to {selected_drive}.[/bold green]")
+        else:
+            console.print("[yellow]Flashing cancelled by user.[/yellow]")
+        return
+
+    console.print("\n[bold cyan]Available USB Drives Detected:[/bold cyan]")
+    for i, drive in enumerate(usb_drives):
+        console.print(f"  [bold]{i+1}[/bold]: {drive['name']} ({drive['size']})")
+
+    if flash_usb:
+        console.print("[bold red]Error:[/bold red] Multiple USB drives detected. Provide --usb-device to avoid interactive selection.")
+        raise typer.Exit(code=1)
+
+    if typer.confirm("\nDo you want to flash the ISO to a USB drive?"):
+        choice = typer.prompt("Enter the number of the drive to flash")
+        try:
+            drive_index = int(choice) - 1
+            if 0 <= drive_index < len(usb_drives):
+                selected_drive = usb_drives[drive_index]['name']
+                did_flash = _flash_selected_usb_drive(selected_drive, confirm_flash)
+                if did_flash:
+                    console.print(f"\n[bold green]SUCCESS: ISO successfully flashed to {selected_drive}.[/bold green]")
+            else:
+                console.print("[bold red]Invalid selection.[/bold red]")
+        except ValueError:
+            console.print("[bold red]Invalid input. Please enter a number.[/bold red]")
 
 
 def _rebuild_iso():
@@ -358,7 +438,28 @@ def _flash_usb_drive(device: str, force: bool = False):
 
 
 @app.command()
-def create():
+def create(
+    copy_ssh_keys: Optional[bool] = typer.Option(
+        None,
+        "--copy-ssh-keys/--no-copy-ssh-keys",
+        help="Copy or skip the current user's ~/.ssh/id_ed25519 keypair without prompting.",
+    ),
+    flash_usb: Optional[bool] = typer.Option(
+        None,
+        "--flash-usb/--no-flash-usb",
+        help="Flash or skip USB writing without prompting.",
+    ),
+    usb_device: Optional[str] = typer.Option(
+        None,
+        "--usb-device",
+        help="USB block device to flash, such as /dev/sdb. Bypasses USB selection prompts.",
+    ),
+    confirm_flash: Optional[bool] = typer.Option(
+        None,
+        "--confirm-flash/--no-confirm-flash",
+        help="Confirm or cancel the destructive USB write without prompting.",
+    ),
+):
     """
     Builds a customized Debian ISO with unattended installation.
     """
@@ -379,7 +480,7 @@ def create():
         _extract_iso()
     console.print(f"SUCCESS: Source ISO extracted to [yellow]'{WORKSPACE_DIR}/'[/yellow].")
 
-    _stage_current_user_ssh_keys(_get_ssh_install_user())
+    _stage_current_user_ssh_keys(_get_ssh_install_user(), copy_ssh_keys)
 
     with console.status("[bold green]Generating preseed configuration...[/bold green]"):
         _create_preseed_config()
@@ -402,34 +503,7 @@ def create():
         _rebuild_iso()
     console.print(f"SUCCESS: Custom ISO [yellow]'{CUSTOM_ISO_NAME}'[/yellow] created successfully.")
 
-    # --- Optional: Flash to USB ---
-    usb_drives = _find_usb_drives()
-    if usb_drives:
-        if len(usb_drives) == 1:
-            selected_drive = usb_drives[0]['name']
-            console.print(f"\n[bold cyan]Detected single USB Drive:[/bold cyan] {selected_drive} ({usb_drives[0]['size']})")
-            if typer.confirm(f"Do you want to flash the ISO to {selected_drive}?", default=True):
-                _flash_usb_drive(selected_drive, force=True)
-                console.print(f"\n[bold green]SUCCESS: ISO successfully flashed to {selected_drive}.[/bold green]")
-            else:
-                console.print("[yellow]Flashing cancelled by user.[/yellow]")
-        else:
-            console.print("\n[bold cyan]Available USB Drives Detected:[/bold cyan]")
-            for i, drive in enumerate(usb_drives):
-                console.print(f"  [bold]{i+1}[/bold]: {drive['name']} ({drive['size']})")
-            
-            if typer.confirm("\nDo you want to flash the ISO to a USB drive?"):
-                choice = typer.prompt("Enter the number of the drive to flash")
-                try:
-                    drive_index = int(choice) - 1
-                    if 0 <= drive_index < len(usb_drives):
-                        selected_drive = usb_drives[drive_index]['name']
-                        _flash_usb_drive(selected_drive)
-                        console.print(f"\n[bold green]SUCCESS: ISO successfully flashed to {selected_drive}.[/bold green]")
-                    else:
-                        console.print("[bold red]Invalid selection.[/bold red]")
-                except ValueError:
-                    console.print("[bold red]Invalid input. Please enter a number.[/bold red]")
+    _handle_usb_flashing(flash_usb, usb_device, confirm_flash)
 
     console.print("\n[bold green]Process complete.[/bold green]")
 
