@@ -28,6 +28,7 @@ import shutil
 import typer
 import yaml
 import json
+from pathlib import Path
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -46,6 +47,9 @@ WORKSPACE_DIR = "iso-extract"
 CUSTOM_ISO_NAME = "custom-debian-13.iso"
 PRESEED_FILENAME = "preseed.cfg"
 POST_INSTALL_CONFIG = "post_install_config.yaml"
+SSH_KEY_STAGING_DIR = "zebian-ssh"
+SSH_PRIVATE_KEY_NAME = "id_ed25519"
+SSH_PUBLIC_KEY_NAME = "id_ed25519.pub"
 
 
 def _verify_prerequisites():
@@ -54,6 +58,16 @@ def _verify_prerequisites():
         console.print("[bold red]Error:[/bold red] `xorriso` is not installed or not in the system PATH.")
         console.print("Please install it using: [cyan]sudo apt-get install -y xorriso[/cyan]")
         raise typer.Exit(code=1)
+
+
+def _load_post_install_config():
+    """Loads and validates the YAML configuration used for ISO customization."""
+    if not os.path.exists(POST_INSTALL_CONFIG):
+        console.print(f"[bold red]Error:[/bold red] Post-install config not found at [yellow]'{POST_INSTALL_CONFIG}'[/yellow].")
+        raise typer.Exit(code=1)
+
+    with open(POST_INSTALL_CONFIG, "r") as f:
+        return yaml.safe_load(f) or {}
 
 
 def _extract_iso():
@@ -68,12 +82,7 @@ def _extract_iso():
 
 def _create_preseed_config():
     """Generates the preseed config from the YAML configuration file."""      
-    if not os.path.exists(POST_INSTALL_CONFIG):                               
-        console.print(f"[bold red]Error:[/bold red] Post-install config not at [yellow]'{POST_INSTALL_CONFIG}'[/yellow].")                            
-        raise typer.Exit(code=1)                                              
-                                                                                 
-    with open(POST_INSTALL_CONFIG, "r") as f:                                 
-        config = yaml.safe_load(f).get("preseed", {})                         
+    config = _load_post_install_config().get("preseed", {})                         
                                                                                  
     base_packages = " ".join(config.get("base_packages", []))                 
                                                                                  
@@ -125,6 +134,7 @@ d-i grub-installer/only_debian boolean true
 # --- Final Commands ---                                                      
 d-i preseed/late_command string \\
     cp /cdrom/post_install_setup.sh /target/tmp/post_install_setup.sh; \\     
+    if [ -d /cdrom/{SSH_KEY_STAGING_DIR} ]; then cp -a /cdrom/{SSH_KEY_STAGING_DIR} /target/tmp/{SSH_KEY_STAGING_DIR}; fi; \\
     chmod +x /target/tmp/post_install_setup.sh; \\                            
     in-target /tmp/post_install_setup.sh;                                     
 d-i finish-install/reboot boolean true                                        
@@ -186,17 +196,13 @@ menuentry 'Automated Unattended Install' --class auto {
 
 def _generate_post_install_script():
     """Generates the post-install script from a YAML config."""
-    if not os.path.exists(POST_INSTALL_CONFIG):
-        console.print(f"[bold red]Error:[/bold red] Post-install config not found at [yellow]'{POST_INSTALL_CONFIG}'[/yellow].")
-        raise typer.Exit(code=1)
-
-    with open(POST_INSTALL_CONFIG, "r") as f:
-        config = yaml.safe_load(f)
+    config = _load_post_install_config()
 
     packages = " ".join(config.get("packages", []))
     ssh_key_config = config.get("ssh_key", {})
     ssh_key_type = ssh_key_config.get("type", "ed25519")
     ssh_user = ssh_key_config.get("user", "user")
+    generated_key_path = f"/home/{ssh_user}/.ssh/id_{ssh_key_type}"
 
     script_content = f"""#!/bin/bash
 set -e
@@ -205,8 +211,16 @@ set -e
 apt-get update
 apt-get install -y --no-install-recommends {packages}
 
-# --- Generate SSH key ---
-sudo -u {ssh_user} ssh-keygen -t {ssh_key_type} -f /home/{ssh_user}/.ssh/id_rsa -N ""
+# --- Configure SSH key ---
+install -d -m 700 -o {ssh_user} -g {ssh_user} /home/{ssh_user}/.ssh
+
+if [ -f /tmp/{SSH_KEY_STAGING_DIR}/{SSH_PRIVATE_KEY_NAME} ] && [ -f /tmp/{SSH_KEY_STAGING_DIR}/{SSH_PUBLIC_KEY_NAME} ]; then
+    install -m 600 -o {ssh_user} -g {ssh_user} /tmp/{SSH_KEY_STAGING_DIR}/{SSH_PRIVATE_KEY_NAME} /home/{ssh_user}/.ssh/{SSH_PRIVATE_KEY_NAME}
+    install -m 644 -o {ssh_user} -g {ssh_user} /tmp/{SSH_KEY_STAGING_DIR}/{SSH_PUBLIC_KEY_NAME} /home/{ssh_user}/.ssh/{SSH_PUBLIC_KEY_NAME}
+    rm -rf /tmp/{SSH_KEY_STAGING_DIR}
+elif [ ! -f {generated_key_path} ]; then
+    sudo -u {ssh_user} ssh-keygen -t {ssh_key_type} -f {generated_key_path} -N ""
+fi
 
 # --- Clean up ---
 apt-get clean
@@ -221,6 +235,46 @@ echo "Post-installation setup complete."
     
     # Make the script executable
     os.chmod(script_path, 0o755)
+
+
+def _stage_current_user_ssh_keys(ssh_user: str):
+    """Optionally copies the current user's ed25519 keypair into the ISO workspace."""
+    staging_dir = Path(WORKSPACE_DIR) / SSH_KEY_STAGING_DIR
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+
+    ssh_dir = Path.home() / ".ssh"
+    private_key = ssh_dir / SSH_PRIVATE_KEY_NAME
+    public_key = ssh_dir / SSH_PUBLIC_KEY_NAME
+
+    if not private_key.exists() or not public_key.exists():
+        console.print(f"[yellow]No complete SSH keypair found at {private_key} and {public_key}; skipping key import.[/yellow]")
+        return
+
+    should_copy = typer.confirm(
+        f"Copy {private_key} and {public_key} into the ISO for user '{ssh_user}'? This embeds the private key in the ISO.",
+        default=False
+    )
+    if not should_copy:
+        console.print("[yellow]SSH key import skipped.[/yellow]")
+        return
+
+    staging_dir.mkdir(mode=0o700, parents=True)
+    shutil.copy2(private_key, staging_dir / SSH_PRIVATE_KEY_NAME)
+    shutil.copy2(public_key, staging_dir / SSH_PUBLIC_KEY_NAME)
+    os.chmod(staging_dir / SSH_PRIVATE_KEY_NAME, 0o600)
+    os.chmod(staging_dir / SSH_PUBLIC_KEY_NAME, 0o644)
+    console.print(f"SUCCESS: SSH keypair staged for installation user [yellow]'{ssh_user}'[/yellow].")
+
+
+def _get_ssh_install_user():
+    """Returns the account that should receive imported or generated SSH keys."""
+    config = _load_post_install_config()
+    return (
+        config.get("ssh_key", {}).get("user")
+        or config.get("preseed", {}).get("username")
+        or "user"
+    )
 
 
 def _find_usb_drives():
@@ -324,6 +378,8 @@ def create():
         progress.add_task(description="Extracting ISO...", total=None)
         _extract_iso()
     console.print(f"SUCCESS: Source ISO extracted to [yellow]'{WORKSPACE_DIR}/'[/yellow].")
+
+    _stage_current_user_ssh_keys(_get_ssh_install_user())
 
     with console.status("[bold green]Generating preseed configuration...[/bold green]"):
         _create_preseed_config()
