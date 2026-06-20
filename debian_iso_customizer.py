@@ -117,6 +117,11 @@ def package_list(*package_groups):
     return " ".join(packages)
 
 
+def debian_bool(value: bool):
+    """Formats Python booleans for Debian Installer preseed values."""
+    return "true" if value else "false"
+
+
 def make_workspace_writable(workspace_dir: str):
     """Adds owner write permissions to the generated extraction workspace."""
     for root, dirs, files in os.walk(workspace_dir, topdown=False):
@@ -178,6 +183,11 @@ def create_preseed_config(config: dict, workspace_dir: str):
     ssh_user = ssh_key_config.get("user") or preseed_config.get("username", "user")
     ssh_key_type = ssh_key_config.get("type", "ed25519")
     generated_key_path = f"/home/{ssh_user}/.ssh/id_{ssh_key_type}"
+    tasks = ", ".join(preseed_config.get("tasks", ["ssh-server"]))
+    extra_preseed_lines = preseed_config.get("extra", [])
+    extra_preseed = ""
+    if extra_preseed_lines:
+        extra_preseed = "\n\n# --- Extra YAML Preseed Entries ---\n" + "\n".join(extra_preseed_lines)
                                                                                  
     packages = package_list(
         preseed_config.get("base_packages", []),
@@ -193,41 +203,41 @@ d-i keyboard-configuration/xkb-keymap select {preseed_config.get('keyboard_map',
                                                                               
 # --- Network ---                                                             
 d-i netcfg/get_domain string {preseed_config.get('domain_name', 'local')}             
-d-i hw-detect/load_firmware boolean true                                      
+d-i hw-detect/load_firmware boolean {debian_bool(preseed_config.get('load_firmware', True))}                                      
                                                                               
 # --- User Account ---                                                        
-d-i passwd/root-login boolean false                                           
-d-i passwd/make-user boolean true                                             
+d-i passwd/root-login boolean {debian_bool(preseed_config.get('root_login', False))}                                           
+d-i passwd/make-user boolean {debian_bool(preseed_config.get('make_user', True))}                                             
 d-i passwd/user-fullname string {preseed_config.get('user_fullname', 'User')}         
 d-i passwd/username string {preseed_config.get('username', 'user')}                   
 d-i passwd/user-password-crypted password {preseed_config.get('crypted_password')}    
                                                                               
 # --- Clock and Timezone ---                                                  
-d-i clock-setup/utc boolean true                                              
+d-i clock-setup/utc boolean {debian_bool(preseed_config.get('clock_utc', True))}                                              
 d-i time/zone string {preseed_config.get('timezone', 'UTC')}                          
-d-i clock-setup/ntp boolean true                                              
+d-i clock-setup/ntp boolean {debian_bool(preseed_config.get('clock_ntp', True))}                                              
                                                                               
 # --- Partitioning ---                                                        
 d-i partman-auto/method string {preseed_config.get('partitioning_method', 'lvm')}     
 d-i partman-auto-lvm/guided_size string {preseed_config.get('partitioning_size',      
 'max')}                                                                         
-d-i partman-partitioning/confirm_write_new_label boolean true                 
-d-i partman/choose_partition select finish                                    
-d-i partman/confirm boolean true                                              
-d-i partman/confirm_nooverwrite boolean true                                  
+d-i partman-partitioning/confirm_write_new_label boolean {debian_bool(preseed_config.get('confirm_write_new_label', True))}                 
+d-i partman/choose_partition select {preseed_config.get('choose_partition', 'finish')}                                    
+d-i partman/confirm boolean {debian_bool(preseed_config.get('confirm_partitioning', True))}                                              
+d-i partman/confirm_nooverwrite boolean {debian_bool(preseed_config.get('confirm_nooverwrite', True))}                                  
                                                                               
 # --- APT ---                                                                 
-d-i apt-setup/non-free boolean true                                           
-d-i apt-setup/contrib boolean true                                            
+d-i apt-setup/non-free boolean {debian_bool(preseed_config.get('apt_non_free', True))}                                           
+d-i apt-setup/contrib boolean {debian_bool(preseed_config.get('apt_contrib', True))}                                            
                                                                               
 # --- Packages ---                                                            
-tasksel tasksel/first multiselect ssh-server                                  
+tasksel tasksel/first multiselect {tasks}                                  
 d-i pkgsel/include string {packages}                                          
-d-i pkgsel/upgrade select full-upgrade                                        
-d-i pkgsel/update-policy select unattended-upgrades                           
+d-i pkgsel/upgrade select {preseed_config.get('package_upgrade', 'full-upgrade')}                                        
+d-i pkgsel/update-policy select {preseed_config.get('update_policy', 'unattended-upgrades')}                           
                                                                               
 # --- Bootloader ---                                                          
-d-i grub-installer/only_debian boolean true                                   
+d-i grub-installer/only_debian boolean {debian_bool(preseed_config.get('grub_only_debian', True))}                                   
                                                                               
 # --- Final Commands ---                                                      
 d-i preseed/late_command string \\
@@ -244,12 +254,12 @@ d-i preseed/late_command string \\
     fi; \\
     in-target apt-get clean; \\
     rm -rf /target/var/lib/apt/lists/*;                                     
-d-i finish-install/reboot boolean true                                        
-                                                                              
+d-i finish-install/reboot boolean {debian_bool(preseed_config.get('finish_reboot', True))}{extra_preseed}
+
 # --- Automation ---                                                          
-d-i auto-install/enable boolean true                                          
-d-i debian-installer/priority string critical                                 
-d-i debconf/priority string critical                                          
+d-i auto-install/enable boolean {debian_bool(preseed_config.get('auto_install', True))}                                          
+d-i debian-installer/priority string {preseed_config.get('installer_priority', 'critical')}                                 
+d-i debconf/priority string {preseed_config.get('debconf_priority', 'critical')}                                          
     """.strip()                                                               
                                                                               
     dest_preseed_path = os.path.join(workspace_dir, INSTALLER_PRESEED_FILENAME)         
