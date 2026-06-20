@@ -58,46 +58,46 @@ def main():
     """Create customized Debian installer ISOs."""
 
 
-def _status(label: str, message: str, style: str):
+def status(label: str, message: str, style: str):
     """Prints a compact, consistently styled status line."""
     console.print(f"[{style}]{label}:[/{style}] {message}")
 
 
-def _success(message: str):
-    _status("SUCCESS", message, "bold green")
+def success(message: str):
+    status("SUCCESS", message, "bold green")
 
 
-def _warning(message: str):
-    _status("WARNING", message, "bold yellow")
+def warning(message: str):
+    status("WARNING", message, "bold yellow")
 
 
-def _error(message: str):
-    _status("ERROR", message, "bold red")
+def error(message: str):
+    status("ERROR", message, "bold red")
 
 
-def _skipped(message: str):
-    _status("SKIPPED", message, "bold yellow")
+def skipped(message: str):
+    status("SKIPPED", message, "bold yellow")
 
 
-def _verify_prerequisites():
+def verify_prerequisites():
     """Confirms that `xorriso` is available on the system PATH."""
     if not shutil.which("xorriso"):
-        _error("`xorriso` is not installed or not in the system PATH.")
+        error("`xorriso` is not installed or not in the system PATH.")
         console.print("Please install it using: [cyan]sudo apt-get install -y xorriso[/cyan]")
         raise typer.Exit(code=1)
 
 
-def _load_post_install_config():
+def load_post_install_config():
     """Loads and validates the YAML configuration used for ISO customization."""
     if not os.path.exists(POST_INSTALL_CONFIG):
-        _error(f"Post-install config not found at [yellow]'{POST_INSTALL_CONFIG}'[/yellow].")
+        error(f"Post-install config not found at [yellow]'{POST_INSTALL_CONFIG}'[/yellow].")
         raise typer.Exit(code=1)
 
     with open(POST_INSTALL_CONFIG, "r") as f:
         return yaml.safe_load(f) or {}
 
 
-def _make_workspace_writable():
+def make_workspace_writable():
     """Adds owner write permissions to the generated extraction workspace."""
     for root, dirs, files in os.walk(WORKSPACE_DIR, topdown=False):
         for filename in files:
@@ -111,13 +111,13 @@ def _make_workspace_writable():
     os.chmod(WORKSPACE_DIR, 0o700)
 
 
-def _remove_workspace():
+def remove_workspace():
     """Removes the generated ISO extraction workspace, including read-only files."""
     if not os.path.exists(WORKSPACE_DIR):
         return
 
     try:
-        _make_workspace_writable()
+        make_workspace_writable()
         shutil.rmtree(WORKSPACE_DIR)
     except PermissionError:
         stale_workspace = f"{WORKSPACE_DIR}.stale"
@@ -126,34 +126,34 @@ def _remove_workspace():
             suffix += 1
             stale_workspace = f"{WORKSPACE_DIR}.stale-{suffix}"
         os.rename(WORKSPACE_DIR, stale_workspace)
-        _warning(f"Moved unremovable workspace to [yellow]{stale_workspace}[/yellow].")
+        warning(f"Moved unremovable workspace to [yellow]{stale_workspace}[/yellow].")
 
 
-def _extract_iso():
+def extract_iso():
     """Extracts the source Debian ISO into the workspace directory."""
-    _remove_workspace()
+    remove_workspace()
     os.makedirs(WORKSPACE_DIR, exist_ok=True)
     command = [
         "xorriso", "-osirrox", "on:auto_chmod_on", "-indev", SOURCE_ISO_PATH,
         "-extract", "/", WORKSPACE_DIR
     ]
     subprocess.run(command, check=True, capture_output=True)
-    _make_workspace_writable()
+    make_workspace_writable()
 
 
-def _remove_existing_custom_iso():
+def remove_existing_custom_iso():
     """Removes the previous generated ISO before rebuilding it."""
     if not os.path.lexists(CUSTOM_ISO_NAME):
         return
     if os.path.isdir(CUSTOM_ISO_NAME) and not os.path.islink(CUSTOM_ISO_NAME):
-        _error(f"Output path [yellow]'{CUSTOM_ISO_NAME}'[/yellow] is a directory.")
+        error(f"Output path [yellow]'{CUSTOM_ISO_NAME}'[/yellow] is a directory.")
         raise typer.Exit(code=1)
     os.remove(CUSTOM_ISO_NAME)
 
 
-def _create_preseed_config():
+def create_preseed_config():
     """Generates the preseed config from the YAML configuration file."""      
-    config = _load_post_install_config().get("preseed", {})                         
+    config = load_post_install_config().get("preseed", {})                         
                                                                                  
     base_packages = " ".join(config.get("base_packages", []))                 
                                                                                  
@@ -221,7 +221,7 @@ d-i debconf/priority string critical
         f.write(preseed_content)  
 
 
-def _update_bootloader_configs():
+def update_bootloader_configs():
     """Modifies ISOLINUX and GRUB to default to a fully unattended install."""
     # --- ISOLINUX (BIOS) Modification ---
     isolinux_cfg_path = os.path.join(WORKSPACE_DIR, "isolinux", "isolinux.cfg")
@@ -265,9 +265,9 @@ menuentry 'Automated Unattended Install' --class auto {
         f.write(modified_grub_content)
 
 
-def _generate_post_install_script():
+def generate_post_install_script():
     """Generates the post-install script from a YAML config."""
-    config = _load_post_install_config()
+    config = load_post_install_config()
 
     packages = " ".join(config.get("packages", []))
     ssh_key_config = config.get("ssh_key", {})
@@ -308,7 +308,7 @@ echo "Post-installation setup complete."
     os.chmod(script_path, 0o755)
 
 
-def _stage_current_user_ssh_keys(ssh_user: str, copy_ssh_keys: Optional[bool] = None):
+def stage_current_user_ssh_keys(ssh_user: str, copy_ssh_keys: Optional[bool] = None):
     """Optionally copies the current user's ed25519 keypair into the ISO workspace."""
     staging_dir = Path(WORKSPACE_DIR) / SSH_KEY_STAGING_DIR
     if staging_dir.exists():
@@ -321,9 +321,9 @@ def _stage_current_user_ssh_keys(ssh_user: str, copy_ssh_keys: Optional[bool] = 
     if not private_key.exists() or not public_key.exists():
         message = f"No complete SSH keypair found at {private_key} and {public_key}."
         if copy_ssh_keys:
-            _error(message)
+            error(message)
             raise typer.Exit(code=1)
-        _warning(f"{message} Skipping key import.")
+        warning(f"{message} Skipping key import.")
         return
 
     should_copy = copy_ssh_keys
@@ -333,7 +333,7 @@ def _stage_current_user_ssh_keys(ssh_user: str, copy_ssh_keys: Optional[bool] = 
             default=True
         )
     if not should_copy:
-        _skipped("SSH key import.")
+        skipped("SSH key import.")
         return
 
     staging_dir.mkdir(mode=0o700, parents=True)
@@ -341,12 +341,12 @@ def _stage_current_user_ssh_keys(ssh_user: str, copy_ssh_keys: Optional[bool] = 
     shutil.copy2(public_key, staging_dir / SSH_PUBLIC_KEY_NAME)
     os.chmod(staging_dir / SSH_PRIVATE_KEY_NAME, 0o600)
     os.chmod(staging_dir / SSH_PUBLIC_KEY_NAME, 0o644)
-    _success(f"SSH keypair staged for [yellow]'{ssh_user}'[/yellow].")
+    success(f"SSH keypair staged for [yellow]'{ssh_user}'[/yellow].")
 
 
-def _get_ssh_install_user():
+def get_ssh_install_user():
     """Returns the account that should receive imported or generated SSH keys."""
-    config = _load_post_install_config()
+    config = load_post_install_config()
     return (
         config.get("ssh_key", {}).get("user")
         or config.get("preseed", {}).get("username")
@@ -354,7 +354,7 @@ def _get_ssh_install_user():
     )
 
 
-def _find_usb_drives():
+def find_usb_drives():
     """Finds connected USB drives that are whole disks."""
     try:
         result = subprocess.run(
@@ -376,34 +376,34 @@ def _find_usb_drives():
         return []
 
 
-def _flash_selected_usb_drive(device: str, confirm_flash: Optional[bool] = None):
+def flash_selected_usb_drive(device: str, confirm_flash: Optional[bool] = None):
     """Flashes a selected USB drive, optionally pre-answering the destructive confirmation."""
     if confirm_flash is False:
-        _skipped("USB flashing cancelled by command option.")
+        skipped("USB flashing cancelled by command option.")
         return False
 
-    _flash_usb_drive(device, force=confirm_flash is True)
+    flash_usb_drive(device, force=confirm_flash is True)
     return True
 
 
-def _handle_usb_flashing(
+def handle_usb_flashing(
     flash_usb: Optional[bool] = None,
     usb_device: Optional[str] = None,
     confirm_flash: Optional[bool] = None,
 ):
     """Optionally flashes the generated ISO to USB using command options or prompts."""
     if flash_usb is False:
-        _skipped("USB flashing.")
+        skipped("USB flashing.")
         return
 
     if usb_device:
-        _flash_selected_usb_drive(usb_device, confirm_flash)
+        flash_selected_usb_drive(usb_device, confirm_flash)
         return
 
-    usb_drives = _find_usb_drives()
+    usb_drives = find_usb_drives()
     if not usb_drives:
         if flash_usb:
-            _error("No USB drives detected. Provide --usb-device to flash a specific device.")
+            error("No USB drives detected. Provide --usb-device to flash a specific device.")
             raise typer.Exit(code=1)
         return
 
@@ -414,9 +414,9 @@ def _handle_usb_flashing(
         if should_flash is None:
             should_flash = typer.confirm(f"Do you want to flash the ISO to {selected_drive}?", default=True)
         if should_flash:
-            _flash_selected_usb_drive(selected_drive, confirm_flash if confirm_flash is not None else True)
+            flash_selected_usb_drive(selected_drive, confirm_flash if confirm_flash is not None else True)
         else:
-            _skipped("USB flashing cancelled by user.")
+            skipped("USB flashing cancelled by user.")
         return
 
     console.print("\n[bold cyan]Available USB Drives Detected:[/bold cyan]")
@@ -424,7 +424,7 @@ def _handle_usb_flashing(
         console.print(f"  [bold]{i+1}[/bold]: {drive['name']} ({drive['size']})")
 
     if flash_usb:
-        _error("Multiple USB drives detected. Provide --usb-device to avoid interactive selection.")
+        error("Multiple USB drives detected. Provide --usb-device to avoid interactive selection.")
         raise typer.Exit(code=1)
 
     if typer.confirm("\nDo you want to flash the ISO to a USB drive?", default=True):
@@ -433,16 +433,16 @@ def _handle_usb_flashing(
             drive_index = int(choice) - 1
             if 0 <= drive_index < len(usb_drives):
                 selected_drive = usb_drives[drive_index]['name']
-                _flash_selected_usb_drive(selected_drive, confirm_flash)
+                flash_selected_usb_drive(selected_drive, confirm_flash)
             else:
-                _error("Invalid selection.")
+                error("Invalid selection.")
         except ValueError:
-            _error("Invalid input. Please enter a number.")
+            error("Invalid input. Please enter a number.")
 
 
-def _rebuild_iso():
+def rebuild_iso():
     """Rebuilds the workspace into a new, bootable ISO image."""
-    _remove_existing_custom_iso()
+    remove_existing_custom_iso()
     command = [
         "xorriso", "-as", "mkisofs",
         "-isohybrid-mbr", "/usr/lib/ISOLINUX/isohdpfx.bin",
@@ -459,9 +459,9 @@ def _rebuild_iso():
     subprocess.run(command, check=True, capture_output=True)
 
 
-def _flash_usb_drive(device: str, force: bool = False):
+def flash_usb_drive(device: str, force: bool = False):
     """Flashes the custom ISO to the selected USB drive."""
-    _warning(f"Writing [yellow]{CUSTOM_ISO_NAME}[/yellow] to [yellow]{device}[/yellow].")
+    warning(f"Writing [yellow]{CUSTOM_ISO_NAME}[/yellow] to [yellow]{device}[/yellow].")
     
     # Unmount the device first
     try:
@@ -470,9 +470,9 @@ def _flash_usb_drive(device: str, force: bool = False):
         # Ignore errors if the device is not mounted
         pass
 
-    _warning(f"This will destroy all data on [yellow]{device}[/yellow].")
+    warning(f"This will destroy all data on [yellow]{device}[/yellow].")
     if not force and not typer.confirm("Are you absolutely sure you want to continue?", default=True):
-        _skipped("Operation cancelled.")
+        skipped("Operation cancelled.")
         raise typer.Exit()
 
     command = [
@@ -491,11 +491,11 @@ def _flash_usb_drive(device: str, force: bool = False):
             stderr=subprocess.PIPE,
             stdout=subprocess.PIPE
         )
-        _success(f"Flashed [yellow]{CUSTOM_ISO_NAME}[/yellow] to [yellow]{device}[/yellow].")
+        success(f"Flashed [yellow]{CUSTOM_ISO_NAME}[/yellow] to [yellow]{device}[/yellow].")
         
         # Eject the device
         subprocess.run(["sudo", "eject", device], check=True, capture_output=True)
-        _success(f"Ejected [yellow]{device}[/yellow].")
+        success(f"Ejected [yellow]{device}[/yellow].")
 
 
 @app.command()
@@ -527,7 +527,7 @@ def create(
     console.print("[bold cyan]Creating custom Debian ISO[/bold cyan]")
 
     with console.status("[bold green]Verifying prerequisites...[/bold green]"):
-        _verify_prerequisites()
+        verify_prerequisites()
 
     with Progress(
         SpinnerColumn(),
@@ -535,18 +535,18 @@ def create(
         transient=True,
     ) as progress:
         progress.add_task(description="Extracting ISO...", total=None)
-        _extract_iso()
+        extract_iso()
 
-    _stage_current_user_ssh_keys(_get_ssh_install_user(), copy_ssh_keys)
+    stage_current_user_ssh_keys(get_ssh_install_user(), copy_ssh_keys)
 
     with console.status("[bold green]Generating preseed configuration...[/bold green]"):
-        _create_preseed_config()
+        create_preseed_config()
 
     with console.status("[bold green]Generating post-install script...[/bold green]"):
-        _generate_post_install_script()
+        generate_post_install_script()
 
     with console.status("[bold green]Updating bootloader menus...[/bold green]"):
-        _update_bootloader_configs()
+        update_bootloader_configs()
 
     with Progress(
         SpinnerColumn(),
@@ -554,10 +554,10 @@ def create(
         transient=True,
     ) as progress:
         progress.add_task(description="Rebuilding custom ISO...", total=None)
-        _rebuild_iso()
-    _success(f"Created [yellow]'{CUSTOM_ISO_NAME}'[/yellow].")
+        rebuild_iso()
+    success(f"Created [yellow]'{CUSTOM_ISO_NAME}'[/yellow].")
 
-    _handle_usb_flashing(flash_usb, usb_device, confirm_flash)
+    handle_usb_flashing(flash_usb, usb_device, confirm_flash)
 
 if __name__ == "__main__":
     app()
