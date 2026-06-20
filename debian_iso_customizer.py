@@ -309,7 +309,7 @@ def _stage_current_user_ssh_keys(ssh_user: str, copy_ssh_keys: Optional[bool] = 
     if should_copy is None:
         should_copy = typer.confirm(
             f"Copy {private_key} and {public_key} into the ISO for user '{ssh_user}'? This embeds the private key in the ISO.",
-            default=False
+            default=True
         )
     if not should_copy:
         console.print("[yellow]SSH key import skipped.[/yellow]")
@@ -408,7 +408,7 @@ def _handle_usb_flashing(
         console.print("[bold red]Error:[/bold red] Multiple USB drives detected. Provide --usb-device to avoid interactive selection.")
         raise typer.Exit(code=1)
 
-    if typer.confirm("\nDo you want to flash the ISO to a USB drive?"):
+    if typer.confirm("\nDo you want to flash the ISO to a USB drive?", default=True):
         choice = typer.prompt("Enter the number of the drive to flash")
         try:
             drive_index = int(choice) - 1
@@ -454,7 +454,7 @@ def _flash_usb_drive(device: str, force: bool = False):
         pass
 
     console.print(f"[bold red]WARNING: This will destroy all data on {device}.[/bold red]")
-    if not force and not typer.confirm("Are you absolutely sure you want to continue?"):
+    if not force and not typer.confirm("Are you absolutely sure you want to continue?", default=True):
         console.print("[yellow]Operation cancelled.[/yellow]")
         raise typer.Exit()
 
