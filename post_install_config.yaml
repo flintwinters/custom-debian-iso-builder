@@ -26,6 +26,7 @@ packages:
 # If builder keys are not imported, generate this key type for the install user.
 ssh_key:
   type: "ed25519"
+  user: "sword"
 
 # --- Installer Configuration ---
 # Values used to generate the installer preseed inside the ISO.
