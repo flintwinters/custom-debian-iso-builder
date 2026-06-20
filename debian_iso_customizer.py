@@ -76,14 +76,58 @@ def _load_post_install_config():
         return yaml.safe_load(f) or {}
 
 
+def _make_workspace_writable():
+    """Adds owner write permissions to the generated extraction workspace."""
+    for root, dirs, files in os.walk(WORKSPACE_DIR, topdown=False):
+        for filename in files:
+            path = os.path.join(root, filename)
+            if not os.path.islink(path):
+                os.chmod(path, 0o600)
+        for dirname in dirs:
+            path = os.path.join(root, dirname)
+            if not os.path.islink(path):
+                os.chmod(path, 0o700)
+    os.chmod(WORKSPACE_DIR, 0o700)
+
+
+def _remove_workspace():
+    """Removes the generated ISO extraction workspace, including read-only files."""
+    if not os.path.exists(WORKSPACE_DIR):
+        return
+
+    try:
+        _make_workspace_writable()
+        shutil.rmtree(WORKSPACE_DIR)
+    except PermissionError:
+        stale_workspace = f"{WORKSPACE_DIR}.stale"
+        suffix = 1
+        while os.path.exists(stale_workspace):
+            suffix += 1
+            stale_workspace = f"{WORKSPACE_DIR}.stale-{suffix}"
+        os.rename(WORKSPACE_DIR, stale_workspace)
+        console.print(f"[yellow]Moved unremovable workspace to {stale_workspace}.[/yellow]")
+
+
 def _extract_iso():
     """Extracts the source Debian ISO into the workspace directory."""
+    _remove_workspace()
     os.makedirs(WORKSPACE_DIR, exist_ok=True)
     command = [
-        "xorriso", "-osirrox", "on", "-indev", SOURCE_ISO_PATH,
+        "xorriso", "-osirrox", "on:auto_chmod_on", "-indev", SOURCE_ISO_PATH,
         "-extract", "/", WORKSPACE_DIR
     ]
     subprocess.run(command, check=True, capture_output=True)
+    _make_workspace_writable()
+
+
+def _remove_existing_custom_iso():
+    """Removes the previous generated ISO before rebuilding it."""
+    if not os.path.lexists(CUSTOM_ISO_NAME):
+        return
+    if os.path.isdir(CUSTOM_ISO_NAME) and not os.path.islink(CUSTOM_ISO_NAME):
+        console.print(f"[bold red]Error:[/bold red] Output path '{CUSTOM_ISO_NAME}' is a directory.")
+        raise typer.Exit(code=1)
+    os.remove(CUSTOM_ISO_NAME)
 
 
 def _create_preseed_config():
@@ -381,6 +425,7 @@ def _handle_usb_flashing(
 
 def _rebuild_iso():
     """Rebuilds the workspace into a new, bootable ISO image."""
+    _remove_existing_custom_iso()
     command = [
         "xorriso", "-as", "mkisofs",
         "-isohybrid-mbr", "/usr/lib/ISOLINUX/isohdpfx.bin",
@@ -463,8 +508,6 @@ def create(
     """
     Builds a customized Debian ISO with unattended installation.
     """
-    console.print("[bold cyan]Starting Debian ISO Customization Process[/bold cyan]")
-
     console.print("[bold cyan]Starting Debian ISO Customization Process[/bold cyan]")
 
     with console.status("[bold green]Verifying prerequisites...[/bold green]"):
