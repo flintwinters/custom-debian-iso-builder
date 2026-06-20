@@ -43,11 +43,11 @@ app = typer.Typer(
 console = Console()
 
 # --- Constants & Configuration ---
-SOURCE_ISO_PATH = "debian-13.0.0-amd64-netinst.iso"
-WORKSPACE_DIR = "iso-extract"
-CUSTOM_ISO_NAME = "custom-debian-13.iso"
-PRESEED_FILENAME = "preseed.cfg"
-POST_INSTALL_CONFIG = "post_install_config.yaml"
+DEFAULT_SOURCE_ISO_PATH = "debian-13.0.0-amd64-netinst.iso"
+DEFAULT_WORKSPACE_DIR = "iso-extract"
+DEFAULT_CUSTOM_ISO_NAME = "custom-debian-13.iso"
+DEFAULT_CONFIG_PATH = "post_install_config.yaml"
+INSTALLER_PRESEED_FILENAME = "preseed.cfg"
 SSH_KEY_STAGING_DIR = "zebian-ssh"
 SSH_PRIVATE_KEY_NAME = "id_ed25519"
 SSH_PUBLIC_KEY_NAME = "id_ed25519.pub"
@@ -87,14 +87,24 @@ def verify_prerequisites():
         raise typer.Exit(code=1)
 
 
-def load_post_install_config():
+def load_config(config_path: str):
     """Loads and validates the YAML configuration used for ISO customization."""
-    if not os.path.exists(POST_INSTALL_CONFIG):
-        error(f"Post-install config not found at [yellow]'{POST_INSTALL_CONFIG}'[/yellow].")
+    if not os.path.exists(config_path):
+        error(f"Config not found at [yellow]'{config_path}'[/yellow].")
         raise typer.Exit(code=1)
 
-    with open(POST_INSTALL_CONFIG, "r") as f:
+    with open(config_path, "r") as f:
         return yaml.safe_load(f) or {}
+
+
+def iso_config(config: dict):
+    """Returns ISO build paths from YAML with stable defaults."""
+    iso = config.get("iso", {})
+    return {
+        "source": iso.get("source", DEFAULT_SOURCE_ISO_PATH),
+        "workspace": iso.get("workspace", DEFAULT_WORKSPACE_DIR),
+        "output": iso.get("output", DEFAULT_CUSTOM_ISO_NAME),
+    }
 
 
 def package_list(*package_groups):
@@ -107,9 +117,9 @@ def package_list(*package_groups):
     return " ".join(packages)
 
 
-def make_workspace_writable():
+def make_workspace_writable(workspace_dir: str):
     """Adds owner write permissions to the generated extraction workspace."""
-    for root, dirs, files in os.walk(WORKSPACE_DIR, topdown=False):
+    for root, dirs, files in os.walk(workspace_dir, topdown=False):
         for filename in files:
             path = os.path.join(root, filename)
             if not os.path.islink(path):
@@ -118,89 +128,88 @@ def make_workspace_writable():
             path = os.path.join(root, dirname)
             if not os.path.islink(path):
                 os.chmod(path, 0o700)
-    os.chmod(WORKSPACE_DIR, 0o700)
+    os.chmod(workspace_dir, 0o700)
 
 
-def remove_workspace():
+def remove_workspace(workspace_dir: str):
     """Removes the generated ISO extraction workspace, including read-only files."""
-    if not os.path.exists(WORKSPACE_DIR):
+    if not os.path.exists(workspace_dir):
         return
 
     try:
-        make_workspace_writable()
-        shutil.rmtree(WORKSPACE_DIR)
+        make_workspace_writable(workspace_dir)
+        shutil.rmtree(workspace_dir)
     except PermissionError:
-        stale_workspace = f"{WORKSPACE_DIR}.stale"
+        stale_workspace = f"{workspace_dir}.stale"
         suffix = 1
         while os.path.exists(stale_workspace):
             suffix += 1
-            stale_workspace = f"{WORKSPACE_DIR}.stale-{suffix}"
-        os.rename(WORKSPACE_DIR, stale_workspace)
+            stale_workspace = f"{workspace_dir}.stale-{suffix}"
+        os.rename(workspace_dir, stale_workspace)
         warning(f"Moved unremovable workspace to [yellow]{stale_workspace}[/yellow].")
 
 
-def extract_iso():
+def extract_iso(source_iso_path: str, workspace_dir: str):
     """Extracts the source Debian ISO into the workspace directory."""
-    remove_workspace()
-    os.makedirs(WORKSPACE_DIR, exist_ok=True)
+    remove_workspace(workspace_dir)
+    os.makedirs(workspace_dir, exist_ok=True)
     command = [
-        "xorriso", "-osirrox", "on:auto_chmod_on", "-indev", SOURCE_ISO_PATH,
-        "-extract", "/", WORKSPACE_DIR
+        "xorriso", "-osirrox", "on:auto_chmod_on", "-indev", source_iso_path,
+        "-extract", "/", workspace_dir
     ]
     subprocess.run(command, check=True, capture_output=True)
-    make_workspace_writable()
+    make_workspace_writable(workspace_dir)
 
 
-def remove_existing_custom_iso():
+def remove_existing_custom_iso(custom_iso_name: str):
     """Removes the previous generated ISO before rebuilding it."""
-    if not os.path.lexists(CUSTOM_ISO_NAME):
+    if not os.path.lexists(custom_iso_name):
         return
-    if os.path.isdir(CUSTOM_ISO_NAME) and not os.path.islink(CUSTOM_ISO_NAME):
-        error(f"Output path [yellow]'{CUSTOM_ISO_NAME}'[/yellow] is a directory.")
+    if os.path.isdir(custom_iso_name) and not os.path.islink(custom_iso_name):
+        error(f"Output path [yellow]'{custom_iso_name}'[/yellow] is a directory.")
         raise typer.Exit(code=1)
-    os.remove(CUSTOM_ISO_NAME)
+    os.remove(custom_iso_name)
 
 
-def create_preseed_config():
+def create_preseed_config(config: dict, workspace_dir: str):
     """Generates the preseed config from the YAML configuration file."""      
-    post_install_config = load_post_install_config()
-    config = post_install_config.get("preseed", {})
-    ssh_key_config = post_install_config.get("ssh_key", {})
-    ssh_user = ssh_key_config.get("user") or config.get("username", "user")
+    preseed_config = config.get("preseed", {})
+    ssh_key_config = config.get("ssh_key", {})
+    ssh_user = ssh_key_config.get("user") or preseed_config.get("username", "user")
     ssh_key_type = ssh_key_config.get("type", "ed25519")
     generated_key_path = f"/home/{ssh_user}/.ssh/id_{ssh_key_type}"
                                                                                  
     packages = package_list(
-        config.get("base_packages", []),
-        post_install_config.get("packages", []),
+        preseed_config.get("base_packages", []),
+        config.get("packages", []),
     )
                                                                                  
     preseed_content = f"""                                                    
 # --- Localization ---                                                        
-d-i debian-installer/language string {config.get('language', 'en')}           
-d-i debian-installer/country string {config.get('country', 'US')}             
-d-i debian-installer/locale string {config.get('locale', 'en_US.UTF-8')}      
-d-i keyboard-configuration/xkb-keymap select {config.get('keyboard_map', 'us')}                                                                          
+d-i debian-installer/language string {preseed_config.get('language', 'en')}           
+d-i debian-installer/country string {preseed_config.get('country', 'US')}             
+d-i debian-installer/locale string {preseed_config.get('locale', 'en_US.UTF-8')}      
+d-i keyboard-configuration/xkb-keymap select {preseed_config.get('keyboard_map', 'us')}                                                                          
                                                                               
 # --- Network ---                                                             
-d-i netcfg/get_domain string {config.get('domain_name', 'local')}             
+d-i netcfg/get_domain string {preseed_config.get('domain_name', 'local')}             
 d-i hw-detect/load_firmware boolean true                                      
                                                                               
 # --- User Account ---                                                        
 d-i passwd/root-login boolean false                                           
 d-i passwd/make-user boolean true                                             
-d-i passwd/user-fullname string {config.get('user_fullname', 'User')}         
-d-i passwd/username string {config.get('username', 'user')}                   
-d-i passwd/user-password-crypted password {config.get('crypted_password')}    
+d-i passwd/user-fullname string {preseed_config.get('user_fullname', 'User')}         
+d-i passwd/username string {preseed_config.get('username', 'user')}                   
+d-i passwd/user-password-crypted password {preseed_config.get('crypted_password')}    
                                                                               
 # --- Clock and Timezone ---                                                  
 d-i clock-setup/utc boolean true                                              
-d-i time/zone string {config.get('timezone', 'UTC')}                          
+d-i time/zone string {preseed_config.get('timezone', 'UTC')}                          
 d-i clock-setup/ntp boolean true                                              
                                                                               
 # --- Partitioning ---                                                        
-d-i partman-auto/method string {config.get('partitioning_method', 'lvm')}     
-d-i partman-auto-lvm/guided_size string {config.get('partitioning_size',      
+d-i partman-auto/method string {preseed_config.get('partitioning_method', 'lvm')}     
+d-i partman-auto-lvm/guided_size string {preseed_config.get('partitioning_size',      
 'max')}                                                                         
 d-i partman-partitioning/confirm_write_new_label boolean true                 
 d-i partman/choose_partition select finish                                    
@@ -243,15 +252,15 @@ d-i debian-installer/priority string critical
 d-i debconf/priority string critical                                          
     """.strip()                                                               
                                                                               
-    dest_preseed_path = os.path.join(WORKSPACE_DIR, PRESEED_FILENAME)         
+    dest_preseed_path = os.path.join(workspace_dir, INSTALLER_PRESEED_FILENAME)         
     with open(dest_preseed_path, "w") as f:                                   
         f.write(preseed_content)  
 
 
-def update_bootloader_configs():
+def update_bootloader_configs(workspace_dir: str):
     """Modifies ISOLINUX and GRUB to default to a fully unattended install."""
     # --- ISOLINUX (BIOS) Modification ---
-    isolinux_cfg_path = os.path.join(WORKSPACE_DIR, "isolinux", "isolinux.cfg")
+    isolinux_cfg_path = os.path.join(workspace_dir, "isolinux", "isolinux.cfg")
     
     # Read original content
     with open(isolinux_cfg_path, "r") as f:
@@ -272,7 +281,7 @@ LABEL autoinstall
         f.write(modified_isolinux_content)
 
     # --- GRUB (UEFI) Modification ---
-    grub_cfg_path = os.path.join(WORKSPACE_DIR, "boot", "grub", "grub.cfg")
+    grub_cfg_path = os.path.join(workspace_dir, "boot", "grub", "grub.cfg")
 
     # Read original content
     with open(grub_cfg_path, "r") as f:
@@ -292,9 +301,9 @@ menuentry 'Automated Unattended Install' --class auto {
         f.write(modified_grub_content)
 
 
-def stage_current_user_ssh_keys(ssh_user: str, copy_ssh_keys: Optional[bool] = None):
+def stage_current_user_ssh_keys(workspace_dir: str, ssh_user: str, copy_ssh_keys: Optional[bool] = None):
     """Optionally copies the current user's ed25519 keypair into the ISO workspace."""
-    staging_dir = Path(WORKSPACE_DIR) / SSH_KEY_STAGING_DIR
+    staging_dir = Path(workspace_dir) / SSH_KEY_STAGING_DIR
     if staging_dir.exists():
         shutil.rmtree(staging_dir)
 
@@ -328,9 +337,8 @@ def stage_current_user_ssh_keys(ssh_user: str, copy_ssh_keys: Optional[bool] = N
     success(f"SSH keypair staged for [yellow]'{ssh_user}'[/yellow].")
 
 
-def get_ssh_install_user():
+def get_ssh_install_user(config: dict):
     """Returns the account that should receive imported or generated SSH keys."""
-    config = load_post_install_config()
     return (
         config.get("ssh_key", {}).get("user")
         or config.get("preseed", {}).get("username")
@@ -360,17 +368,18 @@ def find_usb_drives():
         return []
 
 
-def flash_selected_usb_drive(device: str, confirm_flash: Optional[bool] = None):
+def flash_selected_usb_drive(custom_iso_name: str, device: str, confirm_flash: Optional[bool] = None):
     """Flashes a selected USB drive, optionally pre-answering the destructive confirmation."""
     if confirm_flash is False:
         skipped("USB flashing cancelled by command option.")
         return False
 
-    flash_usb_drive(device, force=confirm_flash is True)
+    flash_usb_drive(custom_iso_name, device, force=confirm_flash is True)
     return True
 
 
 def handle_usb_flashing(
+    custom_iso_name: str,
     flash_usb: Optional[bool] = None,
     usb_device: Optional[str] = None,
     confirm_flash: Optional[bool] = None,
@@ -381,7 +390,7 @@ def handle_usb_flashing(
         return
 
     if usb_device:
-        flash_selected_usb_drive(usb_device, confirm_flash)
+        flash_selected_usb_drive(custom_iso_name, usb_device, confirm_flash)
         return
 
     usb_drives = find_usb_drives()
@@ -398,7 +407,7 @@ def handle_usb_flashing(
         if should_flash is None:
             should_flash = typer.confirm(f"Do you want to flash the ISO to {selected_drive}?", default=True)
         if should_flash:
-            flash_selected_usb_drive(selected_drive, confirm_flash if confirm_flash is not None else True)
+            flash_selected_usb_drive(custom_iso_name, selected_drive, confirm_flash if confirm_flash is not None else True)
         else:
             skipped("USB flashing cancelled by user.")
         return
@@ -417,16 +426,16 @@ def handle_usb_flashing(
             drive_index = int(choice) - 1
             if 0 <= drive_index < len(usb_drives):
                 selected_drive = usb_drives[drive_index]['name']
-                flash_selected_usb_drive(selected_drive, confirm_flash)
+                flash_selected_usb_drive(custom_iso_name, selected_drive, confirm_flash)
             else:
                 error("Invalid selection.")
         except ValueError:
             error("Invalid input. Please enter a number.")
 
 
-def rebuild_iso():
+def rebuild_iso(workspace_dir: str, custom_iso_name: str):
     """Rebuilds the workspace into a new, bootable ISO image."""
-    remove_existing_custom_iso()
+    remove_existing_custom_iso(custom_iso_name)
     command = [
         "xorriso", "-as", "mkisofs",
         "-isohybrid-mbr", "/usr/lib/ISOLINUX/isohdpfx.bin",
@@ -437,15 +446,15 @@ def rebuild_iso():
         "-e", "boot/grub/efi.img",
         "-no-emul-boot",
         "-isohybrid-gpt-basdat",
-        "-o", CUSTOM_ISO_NAME,
-        WORKSPACE_DIR
+        "-o", custom_iso_name,
+        workspace_dir
     ]
     subprocess.run(command, check=True, capture_output=True)
 
 
-def flash_usb_drive(device: str, force: bool = False):
+def flash_usb_drive(custom_iso_name: str, device: str, force: bool = False):
     """Flashes the custom ISO to the selected USB drive."""
-    warning(f"Writing [yellow]{CUSTOM_ISO_NAME}[/yellow] to [yellow]{device}[/yellow].")
+    warning(f"Writing [yellow]{custom_iso_name}[/yellow] to [yellow]{device}[/yellow].")
     
     # Unmount the device first
     try:
@@ -460,7 +469,7 @@ def flash_usb_drive(device: str, force: bool = False):
         raise typer.Exit()
 
     command = [
-        "sudo", "dd", f"if={CUSTOM_ISO_NAME}", f"of={device}", "bs=4M", "status=progress"
+        "sudo", "dd", f"if={custom_iso_name}", f"of={device}", "bs=4M", "status=progress"
     ]
     
     with Progress(
@@ -475,7 +484,7 @@ def flash_usb_drive(device: str, force: bool = False):
             stderr=subprocess.PIPE,
             stdout=subprocess.PIPE
         )
-        success(f"Flashed [yellow]{CUSTOM_ISO_NAME}[/yellow] to [yellow]{device}[/yellow].")
+        success(f"Flashed [yellow]{custom_iso_name}[/yellow] to [yellow]{device}[/yellow].")
         
         # Eject the device
         subprocess.run(["sudo", "eject", device], check=True, capture_output=True)
@@ -484,6 +493,11 @@ def flash_usb_drive(device: str, force: bool = False):
 
 @app.command()
 def create(
+    config_path: str = typer.Option(
+        DEFAULT_CONFIG_PATH,
+        "--config",
+        help="YAML configuration file for the ISO build.",
+    ),
     copy_ssh_keys: Optional[bool] = typer.Option(
         None,
         "--copy-ssh-keys/--no-copy-ssh-keys",
@@ -509,6 +523,8 @@ def create(
     Builds a customized Debian ISO with unattended installation.
     """
     console.print("[bold cyan]Creating custom Debian ISO[/bold cyan]")
+    config = load_config(config_path)
+    iso = iso_config(config)
 
     with console.status("[bold green]Verifying prerequisites...[/bold green]"):
         verify_prerequisites()
@@ -519,15 +535,15 @@ def create(
         transient=True,
     ) as progress:
         progress.add_task(description="Extracting ISO...", total=None)
-        extract_iso()
+        extract_iso(iso["source"], iso["workspace"])
 
-    stage_current_user_ssh_keys(get_ssh_install_user(), copy_ssh_keys)
+    stage_current_user_ssh_keys(iso["workspace"], get_ssh_install_user(config), copy_ssh_keys)
 
     with console.status("[bold green]Generating preseed configuration...[/bold green]"):
-        create_preseed_config()
+        create_preseed_config(config, iso["workspace"])
 
     with console.status("[bold green]Updating bootloader menus...[/bold green]"):
-        update_bootloader_configs()
+        update_bootloader_configs(iso["workspace"])
 
     with Progress(
         SpinnerColumn(),
@@ -535,10 +551,10 @@ def create(
         transient=True,
     ) as progress:
         progress.add_task(description="Rebuilding custom ISO...", total=None)
-        rebuild_iso()
-    success(f"Created [yellow]'{CUSTOM_ISO_NAME}'[/yellow].")
+        rebuild_iso(iso["workspace"], iso["output"])
+    success(f"Created [yellow]'{iso['output']}'[/yellow].")
 
-    handle_usb_flashing(flash_usb, usb_device, confirm_flash)
+    handle_usb_flashing(iso["output"], flash_usb, usb_device, confirm_flash)
 
 if __name__ == "__main__":
     app()
