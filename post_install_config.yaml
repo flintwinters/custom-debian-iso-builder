@@ -1,7 +1,12 @@
-# Zebian Post-Installation and Preseed Configuration
+# Zebian ISO Configuration
 
-# --- Post-Installation Settings ---
-# Packages to be installed by the post-install script.
+iso:
+  source: "debian-13.0.0-amd64-netinst.iso"
+  workspace: "iso-extract"
+  output: "custom-debian-13.iso"
+
+# --- Target System Packages ---
+# Packages installed by Debian Installer through the generated preseed.
 packages:
   - build-essential
   - binutils
@@ -17,14 +22,13 @@ packages:
   - nala
   - zip
 
-# --- SSH Key Generation ---
-# Automatically generate an SSH key for the specified user.
+# --- SSH Key Setup ---
+# If builder keys are not imported, generate this key type for the install user.
 ssh_key:
   type: "ed25519"
-  user: "user"
 
-# --- Preseed Configuration ---
-# Values used to generate the preseed.cfg for unattended installation.
+# --- Installer Configuration ---
+# Values used to generate the installer preseed inside the ISO.
 preseed:
   # --- Localization ---
   language: "en"
@@ -39,8 +43,8 @@ preseed:
   # The default user to be created.
   # Note: The password should be a crypted hash.
   # To generate: mkpasswd -m sha-512
-  user_fullname: "User"
-  username: "user"
+  user_fullname: "sword"
+  username: "sword"
   crypted_password: "$6$qfs.xL21$1a.fT6T0p5jF.oE5a/T31gS/v4l7b2a.zP2c.Y3a.Z1" # Default: "password"
   
   # --- Timezone ---
