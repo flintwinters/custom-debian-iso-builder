@@ -37,6 +37,9 @@ packages:
 kwin_scripts:
   - "krohnkite.kwinscript"
 
+wallpaper:
+  source: "wallpaper.jpg"
+
 # --- SSH Key Setup ---
 # If builder keys are not imported, generate this key type for the install user.
 ssh_key:
