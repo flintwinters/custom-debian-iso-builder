@@ -1,9 +1,9 @@
-# Zebian ISO Configuration
+# Helix ISO Configuration
 
 iso:
   source: "debian-13.0.0-amd64-netinst.iso"
   workspace: "iso-extract"
-  output: "custom-debian-13.iso"
+  output: "helix-debian-13.iso"
 
 # --- Target System Packages ---
 # Packages installed by Debian Installer through the generated preseed.
