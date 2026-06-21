@@ -36,7 +36,9 @@ Customization is managed through `helix_config.yaml`:
 - `ssh_key`: SSH key type and optional target user.
 - `preseed`: Debian Installer values such as locale, user, timezone, filesystem, partitioning, and base packages.
 
-The generated guided partitioning preseed supports `ext2`, `ext3`, `ext4`, `xfs`, and `btrfs`. ZFS root installs require a separate custom installer flow and are rejected before ISO extraction.
+The generated guided partitioning preseed supports `ext2`, `ext3`, `ext4`, `xfs`, and `btrfs`. `filesystem: "zfs"` selects Helix's dedicated ZFS root backend instead of Debian Installer guided partitioning.
+
+The ZFS backend currently targets a single-disk UEFI install with an EFI system partition, ext4 `/boot`, and a ZFS root pool configured by the `zfs_root` YAML block. The generated installer script is staged at `/cdrom/helix-zfs/install.sh` and logs to `/var/log/helix-zfs-install.log` inside the installer environment.
 
 The install user's password is not stored in YAML. `create` prompts for it, then writes only a SHA-512 crypt hash into the generated installer preseed. For non-interactive runs, pass the plaintext through `--install-password`.
 
