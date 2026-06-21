@@ -305,7 +305,7 @@ d-i preseed/late_command string \\
         cp -a /cdrom/{KWIN_SCRIPT_STAGING_DIR} /target/tmp/{KWIN_SCRIPT_STAGING_DIR}; \\
         for kwin_script in /target/tmp/{KWIN_SCRIPT_STAGING_DIR}/*.kwinscript; do \\
             [ -e "$kwin_script" ] || continue; \\
-            in-target runuser -u {ssh_user} -- plasmapkg2 -t kwinscript -i /tmp/{KWIN_SCRIPT_STAGING_DIR}/$(basename "$kwin_script"); \\
+            in-target runuser -u {ssh_user} -- sh -c 'if command -v kpackagetool6 >/dev/null; then kpackagetool6 --type KWin/Script --install "$1"; elif command -v kpackagetool5 >/dev/null; then kpackagetool5 --type KWin/Script --install "$1"; elif command -v plasmapkg2 >/dev/null; then plasmapkg2 -t kwinscript -i "$1"; fi' sh /tmp/{KWIN_SCRIPT_STAGING_DIR}/$(basename "$kwin_script"); \\
         done; \\
         rm -rf /target/tmp/{KWIN_SCRIPT_STAGING_DIR}; \\
     fi; \\
