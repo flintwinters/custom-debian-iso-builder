@@ -429,14 +429,17 @@ def update_bootloader_configs(workspace_dir: str):
     # Create new default entry and prepend it
     isolinux_autoinstall_config = """
 DEFAULT autoinstall
+PROMPT 0
+TIMEOUT 1
+ONTIMEOUT autoinstall
 LABEL autoinstall
+    MENU DEFAULT
     MENU LABEL Automated Install
     KERNEL /install.amd/vmlinuz
     APPEND initrd=/install.amd/initrd.gz --- quiet auto=true priority=critical preseed/file=/cdrom/preseed.cfg
     """.strip()
 
-    # Combine and write back, setting a short timeout
-    modified_isolinux_content = f"TIMEOUT 10\n{isolinux_autoinstall_config}\n{original_isolinux_content}"
+    modified_isolinux_content = f"{isolinux_autoinstall_config}\n{original_isolinux_content}"
     with open(isolinux_cfg_path, "w") as f:
         f.write(modified_isolinux_content)
 
@@ -455,8 +458,7 @@ menuentry 'Automated Unattended Install' --class auto {
 }
     """.strip()
 
-    # Combine and write back, setting the new entry as default with a short timeout
-    modified_grub_content = f'set timeout=1\nset default="0"\n\n{grub_autoinstall_entry}\n\n{original_grub_content}'
+    modified_grub_content = f'set timeout_style=hidden\nset timeout=0\nset default="0"\n\n{grub_autoinstall_entry}\n\n{original_grub_content}'
     with open(grub_cfg_path, "w") as f:
         f.write(modified_grub_content)
 
