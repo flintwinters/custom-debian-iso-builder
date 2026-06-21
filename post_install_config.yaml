@@ -60,6 +60,16 @@ preseed:
   # `lvm` or `regular`
   partitioning_method: "lvm"
   partitioning_size: "max"
+  partition_recipe: "atomic"
+
+  # --- File System ---
+  filesystem: "ext4"
+  mount_style: "uuid"
+  remove_existing_raid: true
+  remove_existing_lvm: true
+  confirm_lvm: true
+  confirm_lvm_nooverwrite: true
+
   confirm_write_new_label: true
   choose_partition: "finish"
   confirm_partitioning: true
