@@ -271,8 +271,15 @@ d-i partman/confirm boolean {debian_bool(preseed_config.get('confirm_partitionin
 d-i partman/confirm_nooverwrite boolean {debian_bool(preseed_config.get('confirm_nooverwrite', True))}                                  
                                                                               
 # --- APT ---                                                                 
+d-i apt-setup/use_mirror boolean {debian_bool(preseed_config.get('apt_use_mirror', True))}
+d-i mirror/country string {preseed_config.get('mirror_country', 'manual')}
+d-i mirror/http/hostname string {preseed_config.get('mirror_hostname', 'deb.debian.org')}
+d-i mirror/http/directory string {preseed_config.get('mirror_directory', '/debian')}
+d-i mirror/http/proxy string {preseed_config.get('mirror_proxy', '')}
 d-i apt-setup/non-free boolean {debian_bool(preseed_config.get('apt_non_free', True))}                                           
 d-i apt-setup/contrib boolean {debian_bool(preseed_config.get('apt_contrib', True))}                                            
+d-i apt-setup/non-free-firmware boolean {debian_bool(preseed_config.get('apt_non_free_firmware', True))}
+d-i base-installer/install-recommends boolean {debian_bool(preseed_config.get('install_recommends', False))}
                                                                               
 # --- Packages ---                                                            
 tasksel tasksel/first multiselect {tasks}                                  
