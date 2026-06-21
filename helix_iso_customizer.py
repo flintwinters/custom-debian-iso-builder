@@ -57,6 +57,10 @@ WALLPAPER_STAGING_DIR = "helix-wallpaper"
 SSH_PRIVATE_KEY_NAME = "id_ed25519"
 SSH_PUBLIC_KEY_NAME = "id_ed25519.pub"
 SHA512_CRYPT_SALT_CHARS = string.ascii_letters + string.digits + "./"
+INSTALLER_BOOT_ARGS = (
+    "auto=true priority=critical file=/cdrom/preseed.cfg "
+    "preseed/file=/cdrom/preseed.cfg"
+)
 
 
 @app.callback()
@@ -480,6 +484,40 @@ def stage_wallpaper(config: dict, workspace_dir: str, config_dir: Path):
     success(f"Staged wallpaper [yellow]'{wallpaper_path.name}'[/yellow].")
 
 
+def automated_installer_boot_line(line: str):
+    """Adds unattended preseed boot arguments to regular installer boot lines."""
+    normalized_line = line.lstrip().lower()
+    if not normalized_line.startswith(("append ", "ontimeout ", "linux ")):
+        return line
+    if "/install.amd/vmlinuz" not in line and "initrd=/install.amd" not in line:
+        return line
+    if "rescue/enable=true" in line or "priority=low" in line:
+        return line
+
+    stripped_line = line.rstrip()
+    for argument in INSTALLER_BOOT_ARGS.split():
+        stripped_line = stripped_line.replace(f" {argument}", "")
+
+    if " ---" in stripped_line:
+        return stripped_line.replace(" ---", f" {INSTALLER_BOOT_ARGS} ---", 1)
+
+    return f"{stripped_line} {INSTALLER_BOOT_ARGS}"
+
+
+def automate_installer_boot_files(workspace_dir: str):
+    """Ensures stock Debian boot menu entries also load the Helix preseed."""
+    config_paths = list((Path(workspace_dir) / "isolinux").glob("*.cfg"))
+    config_paths.append(Path(workspace_dir) / "boot" / "grub" / "grub.cfg")
+
+    for config_path in config_paths:
+        if not config_path.exists():
+            continue
+
+        lines = config_path.read_text().splitlines()
+        updated_lines = [automated_installer_boot_line(line) for line in lines]
+        config_path.write_text("\n".join(updated_lines) + "\n")
+
+
 def update_bootloader_configs(workspace_dir: str):
     """Modifies ISOLINUX and GRUB to default to a fully unattended install."""
     # --- ISOLINUX (BIOS) Modification ---
@@ -498,7 +536,7 @@ def update_bootloader_configs(workspace_dir: str):
     preserved_isolinux_content = "\n".join(preserved_isolinux_lines)
 
     # Create new default entry and prepend it
-    isolinux_autoinstall_config = """
+    isolinux_autoinstall_config = f"""
 DEFAULT autoinstall
 PROMPT 0
 TIMEOUT 1
@@ -507,7 +545,7 @@ LABEL autoinstall
     MENU DEFAULT
     MENU LABEL Automated Install
     KERNEL /install.amd/vmlinuz
-    APPEND initrd=/install.amd/initrd.gz auto=true priority=critical preseed/file=/cdrom/preseed.cfg --- quiet
+    APPEND initrd=/install.amd/initrd.gz {INSTALLER_BOOT_ARGS} --- quiet
     """.strip()
 
     modified_isolinux_content = f"{isolinux_autoinstall_config}\n{preserved_isolinux_content}"
@@ -522,16 +560,18 @@ LABEL autoinstall
         original_grub_content = f.read()
 
     # Create new default entry
-    grub_autoinstall_entry = """
-menuentry 'Automated Unattended Install' --class auto {
-    linux    /install.amd/vmlinuz auto=true priority=critical preseed/file=/cdrom/preseed.cfg --- quiet
+    grub_autoinstall_entry = f"""
+menuentry 'Automated Unattended Install' --class auto {{
+    linux    /install.amd/vmlinuz {INSTALLER_BOOT_ARGS} --- quiet
     initrd   /install.amd/initrd.gz
-}
+}}
     """.strip()
 
     modified_grub_content = f'set timeout_style=hidden\nset timeout=0\nset default="0"\n\n{grub_autoinstall_entry}\n\n{original_grub_content}'
     with open(grub_cfg_path, "w") as f:
         f.write(modified_grub_content)
+
+    automate_installer_boot_files(workspace_dir)
 
 
 def stage_current_user_ssh_keys(workspace_dir: str, ssh_user: str, copy_ssh_keys: Optional[bool] = None):
