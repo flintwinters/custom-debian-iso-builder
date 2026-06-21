@@ -38,6 +38,8 @@ Customization is managed through `helix_config.yaml`:
 
 The install user's password is not stored in YAML. `create` prompts for it, then writes only a SHA-512 crypt hash into the generated installer preseed. For non-interactive runs, pass the plaintext through `--install-password`.
 
+Installer failure diagnostics are enabled by default. If Debian Installer fails, Helix writes `/var/log/helix-installer-diagnostics.tar` in the installer environment, copies it to `/target/root/` when the target filesystem is mounted, and prints the configured syslog tail to the installer console and tty4.
+
 ## Usage
 
 To create the custom ISO, simply run the script from the project's root directory:
