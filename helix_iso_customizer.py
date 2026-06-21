@@ -506,7 +506,7 @@ LABEL autoinstall
     MENU DEFAULT
     MENU LABEL Automated Install
     KERNEL /install.amd/vmlinuz
-    APPEND initrd=/install.amd/initrd.gz --- quiet auto=true priority=critical preseed/file=/cdrom/preseed.cfg
+    APPEND initrd=/install.amd/initrd.gz auto=true priority=critical preseed/file=/cdrom/preseed.cfg --- quiet
     """.strip()
 
     modified_isolinux_content = f"{isolinux_autoinstall_config}\n{preserved_isolinux_content}"
@@ -523,7 +523,7 @@ LABEL autoinstall
     # Create new default entry
     grub_autoinstall_entry = """
 menuentry 'Automated Unattended Install' --class auto {
-    linux    /install.amd/vmlinuz --- quiet auto=true priority=critical preseed/file=/cdrom/preseed.cfg
+    linux    /install.amd/vmlinuz auto=true priority=critical preseed/file=/cdrom/preseed.cfg --- quiet
     initrd   /install.amd/initrd.gz
 }
     """.strip()
