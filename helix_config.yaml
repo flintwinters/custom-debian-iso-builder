@@ -131,6 +131,11 @@ preseed:
   installer_priority: "critical"
   debconf_priority: "critical"
 
+  # --- Failure Diagnostics ---
+  failure_diagnostics: true
+  failure_diagnostics_archive: "/var/log/helix-installer-diagnostics.tar"
+  failure_diagnostics_tail_lines: 200
+
   # --- Custom Debian Installer Entries ---
   # Add raw preseed lines here if a custom installer directive is not modeled above.
   extra: []
