@@ -86,6 +86,8 @@ preseed:
 
   # --- Package Selection ---
   tasks:
+    - "desktop"
+    - "kde-desktop"
     - "ssh-server"
   package_upgrade: "full-upgrade"
   update_policy: "unattended-upgrades"
