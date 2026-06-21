@@ -286,6 +286,7 @@ tasksel tasksel/first multiselect {tasks}
 d-i pkgsel/include string {packages}                                          
 d-i pkgsel/upgrade select {preseed_config.get('package_upgrade', 'full-upgrade')}                                        
 d-i pkgsel/update-policy select {preseed_config.get('update_policy', 'unattended-upgrades')}                           
+popularity-contest popularity-contest/participate boolean {debian_bool(preseed_config.get('popularity_contest', False))}
                                                                               
 # --- Bootloader ---                                                          
 d-i grub-installer/only_debian boolean {debian_bool(preseed_config.get('grub_only_debian', True))}                                   
