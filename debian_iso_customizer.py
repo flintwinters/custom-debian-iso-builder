@@ -28,6 +28,8 @@ import shutil
 import typer
 import yaml
 import json
+import secrets
+import string
 from pathlib import Path
 from typing import Optional
 from rich.console import Console
@@ -51,6 +53,7 @@ INSTALLER_PRESEED_FILENAME = "preseed.cfg"
 SSH_KEY_STAGING_DIR = "zebian-ssh"
 SSH_PRIVATE_KEY_NAME = "id_ed25519"
 SSH_PUBLIC_KEY_NAME = "id_ed25519.pub"
+SHA512_CRYPT_SALT_CHARS = string.ascii_letters + string.digits + "./"
 
 
 @app.callback()
@@ -80,10 +83,14 @@ def skipped(message: str):
 
 
 def verify_prerequisites():
-    """Confirms that `xorriso` is available on the system PATH."""
+    """Confirms required system tools are available on the PATH."""
     if not shutil.which("xorriso"):
         error("`xorriso` is not installed or not in the system PATH.")
         console.print("Please install it using: [cyan]sudo apt-get install -y xorriso[/cyan]")
+        raise typer.Exit(code=1)
+    if not shutil.which("openssl"):
+        error("`openssl` is not installed or not in the system PATH.")
+        console.print("Please install it using: [cyan]sudo apt-get install -y openssl[/cyan]")
         raise typer.Exit(code=1)
 
 
@@ -120,6 +127,34 @@ def package_list(*package_groups):
 def debian_bool(value: bool):
     """Formats Python booleans for Debian Installer preseed values."""
     return "true" if value else "false"
+
+
+def crypt_password(plaintext_password: str):
+    """Returns a SHA-512 crypt hash for Debian Installer password preseeding."""
+    if not shutil.which("openssl"):
+        error("`openssl` is not installed or not in the system PATH.")
+        raise typer.Exit(code=1)
+
+    salt = "".join(secrets.choice(SHA512_CRYPT_SALT_CHARS) for _ in range(16))
+    result = subprocess.run(
+        ["openssl", "passwd", "-6", "-salt", salt, "-stdin"],
+        input=f"{plaintext_password}\n",
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def get_install_password(install_password: Optional[str]):
+    """Reads the plaintext install password from CLI option or hidden prompt."""
+    if install_password is not None:
+        return install_password
+    return typer.prompt(
+        "Install user password",
+        hide_input=True,
+        confirmation_prompt=True,
+    )
 
 
 def make_workspace_writable(workspace_dir: str):
@@ -176,7 +211,7 @@ def remove_existing_custom_iso(custom_iso_name: str):
     os.remove(custom_iso_name)
 
 
-def create_preseed_config(config: dict, workspace_dir: str):
+def create_preseed_config(config: dict, workspace_dir: str, crypted_password: str):
     """Generates the preseed config from the YAML configuration file."""      
     preseed_config = config.get("preseed", {})
     ssh_key_config = config.get("ssh_key", {})
@@ -210,7 +245,7 @@ d-i passwd/root-login boolean {debian_bool(preseed_config.get('root_login', Fals
 d-i passwd/make-user boolean {debian_bool(preseed_config.get('make_user', True))}                                             
 d-i passwd/user-fullname string {preseed_config.get('user_fullname', 'User')}         
 d-i passwd/username string {preseed_config.get('username', 'user')}                   
-d-i passwd/user-password-crypted password {preseed_config.get('crypted_password')}    
+d-i passwd/user-password-crypted password {crypted_password}    
                                                                               
 # --- Clock and Timezone ---                                                  
 d-i clock-setup/utc boolean {debian_bool(preseed_config.get('clock_utc', True))}                                              
@@ -515,6 +550,11 @@ def create(
         "--config",
         help="YAML configuration file for the ISO build.",
     ),
+    install_password: Optional[str] = typer.Option(
+        None,
+        "--install-password",
+        help="Plaintext install user password. It is SHA-512 crypted before writing the generated preseed.",
+    ),
     copy_ssh_keys: Optional[bool] = typer.Option(
         None,
         "--copy-ssh-keys/--no-copy-ssh-keys",
@@ -546,6 +586,8 @@ def create(
     with console.status("[bold green]Verifying prerequisites...[/bold green]"):
         verify_prerequisites()
 
+    crypted_password = crypt_password(get_install_password(install_password))
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -557,7 +599,7 @@ def create(
     stage_current_user_ssh_keys(iso["workspace"], get_ssh_install_user(config), copy_ssh_keys)
 
     with console.status("[bold green]Generating preseed configuration...[/bold green]"):
-        create_preseed_config(config, iso["workspace"])
+        create_preseed_config(config, iso["workspace"], crypted_password)
 
     with console.status("[bold green]Updating bootloader menus...[/bold green]"):
         update_bootloader_configs(iso["workspace"])
