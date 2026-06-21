@@ -21,6 +21,17 @@ packages:
   - avahi-daemon
   - nala
   - zip
+  - xserver-xorg
+  - xwayland
+  - sddm
+  - plasma-desktop
+  - plasma-workspace
+  - plasma-workspace-wayland
+  - kwin-x11
+  - kwin-wayland
+  - systemsettings
+  - plasma-nm
+  - plasma-pa
 
 # --- SSH Key Setup ---
 # If builder keys are not imported, generate this key type for the install user.
@@ -86,8 +97,6 @@ preseed:
 
   # --- Package Selection ---
   tasks:
-    - "desktop"
-    - "kde-desktop"
     - "ssh-server"
   package_upgrade: "full-upgrade"
   update_policy: "unattended-upgrades"
