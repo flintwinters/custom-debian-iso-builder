@@ -375,9 +375,27 @@ set -eu
 {assignments}
 
 LOG=/var/log/helix-zfs-install.log
-exec >"$LOG" 2>&1
+report_status() {{
+    message=$1
+    printf "%s\n" "$message"
+    for console_path in /dev/console /dev/tty4; do
+        [ -e "$console_path" ] || continue
+        printf "%s\n" "$message" >"$console_path"
+    done
+}}
 
-echo "Starting Helix ZFS root install on $DISK"
+report_failure() {{
+    exit_code=$?
+    line_number=$1
+    report_status "Helix ZFS installer failed at line $line_number with exit code $exit_code. Log: $LOG"
+    exit "$exit_code"
+}}
+
+exec >>"$LOG" 2>&1
+set -x
+trap 'report_failure $LINENO' EXIT
+
+report_status "Starting Helix ZFS root install on $DISK"
 
 partition_path() {{
     case "$DISK" in
@@ -396,7 +414,7 @@ cat >/etc/apt/sources.list <<EOF
 deb $MIRROR $SUITE main contrib non-free non-free-firmware
 EOF
 apt-get update
-apt-get install -y debootstrap gdisk dosfstools e2fsprogs zfsutils-linux
+apt-get install -y debootstrap gdisk dosfstools e2fsprogs kmod parted zfsutils-linux
 modprobe zfs
 
 swapoff -a || true
@@ -508,7 +526,8 @@ umount /target/sys /target/proc /target/dev/pts /target/dev
 zfs unmount -a
 zpool export "$POOL"
 
-echo "Helix ZFS root install complete."
+trap - EXIT
+report_status "Helix ZFS root install complete."
 reboot -f
 """
 
