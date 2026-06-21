@@ -54,6 +54,7 @@ INSTALLER_PRESEED_FILENAME = "preseed.cfg"
 SSH_KEY_STAGING_DIR = "helix-ssh"
 KWIN_SCRIPT_STAGING_DIR = "helix-kwin-scripts"
 WALLPAPER_STAGING_DIR = "helix-wallpaper"
+ZFS_STAGING_DIR = "helix-zfs"
 SSH_PRIVATE_KEY_NAME = "id_ed25519"
 SSH_PUBLIC_KEY_NAME = "id_ed25519.pub"
 SHA512_CRYPT_SALT_CHARS = string.ascii_letters + string.digits + "./"
@@ -137,18 +138,27 @@ def debian_bool(value: bool):
     return "true" if value else "false"
 
 
+def configured_filesystem(config: dict):
+    """Returns the normalized target root filesystem name."""
+    return str(config.get("preseed", {}).get("filesystem", "ext4")).strip().lower()
+
+
+def uses_zfs_root(config: dict):
+    """Returns whether the YAML requests the dedicated ZFS root backend."""
+    return configured_filesystem(config) == "zfs"
+
+
 def validate_preseed_config(config: dict):
     """Rejects YAML settings the generated Debian Installer preseed cannot satisfy."""
-    preseed_config = config.get("preseed", {})
-    filesystem = str(preseed_config.get("filesystem", "ext4")).strip().lower()
+    filesystem = configured_filesystem(config)
     if filesystem in PARTMAN_FILESYSTEMS:
         return
 
     if filesystem == "zfs":
-        error(
-            "ZFS root installs are not supported by the generated partman preseed. "
-            "Use ext4, xfs, or btrfs, or provide a separate custom installer flow for ZFS."
-        )
+        zfs_config = config.get("zfs_root", {})
+        if zfs_config.get("enabled", True):
+            return
+        error("ZFS root installs require `zfs_root.enabled: true`.")
         raise typer.Exit(code=1)
 
     supported_filesystems = ", ".join(sorted(PARTMAN_FILESYSTEMS))
@@ -287,8 +297,285 @@ def remove_existing_custom_iso(custom_iso_name: str):
     os.remove(custom_iso_name)
 
 
+def zfs_root_config(config: dict):
+    """Returns ZFS root install settings with deterministic defaults."""
+    preseed_config = config.get("preseed", {})
+    mirror_directory = preseed_config.get("mirror_directory", "/debian").strip("/")
+    return {
+        "disk": config.get("zfs_root", {}).get("disk", "/dev/sda"),
+        "pool": config.get("zfs_root", {}).get("pool", "rpool"),
+        "suite": config.get("zfs_root", {}).get("suite", "trixie"),
+        "mirror": config.get("zfs_root", {}).get(
+            "mirror",
+            f"http://{preseed_config.get('mirror_hostname', 'deb.debian.org')}/{mirror_directory}",
+        ),
+        "efi_size": config.get("zfs_root", {}).get("efi_size", "1G"),
+        "boot_size": config.get("zfs_root", {}).get("boot_size", "2G"),
+    }
+
+
+def shell_assignment(name: str, value: str):
+    """Formats a shell variable assignment."""
+    return f"{name}={shlex.quote(str(value))}"
+
+
+def zfs_install_script(config: dict, crypted_password: str):
+    """Returns the standalone ZFS root installer script staged into the ISO."""
+    preseed_config = config.get("preseed", {})
+    root_config = zfs_root_config(config)
+    username = preseed_config.get("username", "user")
+    ssh_key_config = config.get("ssh_key", {})
+    ssh_user = ssh_key_config.get("user") or username
+    ssh_key_type = ssh_key_config.get("type", "ed25519")
+    default_shell = preseed_config.get("default_shell", "/usr/bin/zsh")
+    fullname = preseed_config.get("user_fullname", username)
+    hostname = preseed_config.get("hostname", "helix")
+    timezone = preseed_config.get("timezone", "UTC")
+    locale = preseed_config.get("locale", "en_US.UTF-8")
+    package_string = package_list(
+        preseed_config.get("base_packages", []),
+        ["zsh"],
+        config.get("packages", []),
+        [
+            "linux-image-amd64",
+            "grub-efi-amd64",
+            "shim-signed",
+            "zfsutils-linux",
+            "zfs-initramfs",
+            "sudo",
+            "locales",
+        ],
+    )
+    debootstrap_include = package_string.replace(" ", ",")
+
+    assignments = "\n".join(
+        [
+            shell_assignment("DISK", root_config["disk"]),
+            shell_assignment("POOL", root_config["pool"]),
+            shell_assignment("SUITE", root_config["suite"]),
+            shell_assignment("MIRROR", root_config["mirror"]),
+            shell_assignment("EFI_SIZE", root_config["efi_size"]),
+            shell_assignment("BOOT_SIZE", root_config["boot_size"]),
+            shell_assignment("USERNAME", username),
+            shell_assignment("SSH_USER", ssh_user),
+            shell_assignment("SSH_KEY_TYPE", ssh_key_type),
+            shell_assignment("DEFAULT_SHELL", default_shell),
+            shell_assignment("FULLNAME", fullname),
+            shell_assignment("CRYPTED_PASSWORD", crypted_password),
+            shell_assignment("HOSTNAME", hostname),
+            shell_assignment("TIMEZONE", timezone),
+            shell_assignment("LOCALE", locale),
+            shell_assignment("DEBOOTSTRAP_INCLUDE", debootstrap_include),
+        ]
+    )
+
+    return f"""#!/bin/sh
+set -eu
+
+{assignments}
+
+LOG=/var/log/helix-zfs-install.log
+exec >"$LOG" 2>&1
+
+echo "Starting Helix ZFS root install on $DISK"
+
+partition_path() {{
+    case "$DISK" in
+        *[0-9]) printf "%sp%s\\n" "$DISK" "$1" ;;
+        *) printf "%s%s\\n" "$DISK" "$1" ;;
+    esac
+}}
+
+EFI_PART=$(partition_path 1)
+BOOT_PART=$(partition_path 2)
+ZFS_PART=$(partition_path 3)
+
+export DEBIAN_FRONTEND=noninteractive
+mkdir -p /etc/apt
+cat >/etc/apt/sources.list <<EOF
+deb $MIRROR $SUITE main contrib non-free non-free-firmware
+EOF
+apt-get update
+apt-get install -y debootstrap gdisk dosfstools e2fsprogs zfsutils-linux
+modprobe zfs
+
+swapoff -a || true
+zpool export "$POOL" 2>/dev/null || true
+wipefs -af "$DISK"
+sgdisk --zap-all "$DISK"
+sgdisk -n 1:1M:+"$EFI_SIZE" -t 1:EF00 -c 1:EFI "$DISK"
+sgdisk -n 2:0:+"$BOOT_SIZE" -t 2:8300 -c 2:BOOT "$DISK"
+sgdisk -n 3:0:0 -t 3:BF01 -c 3:ZFS "$DISK"
+partprobe "$DISK" || true
+sleep 2
+
+mkfs.vfat -F32 "$EFI_PART"
+mkfs.ext4 -F "$BOOT_PART"
+
+zpool create -f \\
+    -o ashift=12 \\
+    -o autotrim=on \\
+    -O acltype=posixacl \\
+    -O compression=zstd \\
+    -O dnodesize=auto \\
+    -O normalization=formD \\
+    -O relatime=on \\
+    -O xattr=sa \\
+    -O mountpoint=none \\
+    -R /target \\
+    "$POOL" "$ZFS_PART"
+zfs create -o mountpoint=none "$POOL/ROOT"
+zfs create -o mountpoint=/ -o canmount=noauto "$POOL/ROOT/debian"
+zpool set bootfs="$POOL/ROOT/debian" "$POOL"
+zfs mount "$POOL/ROOT/debian"
+
+mkdir -p /target/boot/efi
+mount "$BOOT_PART" /target/boot
+mount "$EFI_PART" /target/boot/efi
+
+debootstrap --components=main,contrib,non-free,non-free-firmware --include="$DEBOOTSTRAP_INCLUDE" "$SUITE" /target "$MIRROR"
+
+cat >/target/etc/apt/sources.list <<EOF
+deb $MIRROR $SUITE main contrib non-free non-free-firmware
+deb $MIRROR $SUITE-updates main contrib non-free non-free-firmware
+deb http://security.debian.org/debian-security $SUITE-security main contrib non-free non-free-firmware
+EOF
+echo "$HOSTNAME" >/target/etc/hostname
+cat >/target/etc/hosts <<EOF
+127.0.0.1 localhost
+127.0.1.1 $HOSTNAME
+EOF
+echo "$TIMEZONE" >/target/etc/timezone
+printf "%s UTF-8\\n" "$LOCALE" >/target/etc/locale.gen
+
+mount --bind /dev /target/dev
+mount --bind /dev/pts /target/dev/pts
+mount -t proc proc /target/proc
+mount -t sysfs sys /target/sys
+mount -t efivarfs efivarfs /target/sys/firmware/efi/efivars || true
+
+chroot /target locale-gen
+chroot /target ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
+chroot /target useradd --create-home --comment "$FULLNAME" --shell "$DEFAULT_SHELL" "$USERNAME"
+chroot /target usermod --password "$CRYPTED_PASSWORD" "$USERNAME"
+chroot /target usermod --append --groups sudo "$USERNAME"
+rm -f "/target/home/$USERNAME/.bashrc" "/target/home/$USERNAME/.bash_logout" "/target/home/$USERNAME/.profile" "/target/home/$USERNAME/.bash_history"
+
+install -d -m 700 "/target/home/$SSH_USER/.ssh"
+chroot /target chown "$SSH_USER:$SSH_USER" "/home/$SSH_USER/.ssh"
+if [ -f "/cdrom/{SSH_KEY_STAGING_DIR}/{SSH_PRIVATE_KEY_NAME}" ] && [ -f "/cdrom/{SSH_KEY_STAGING_DIR}/{SSH_PUBLIC_KEY_NAME}" ]; then
+    cp "/cdrom/{SSH_KEY_STAGING_DIR}/{SSH_PRIVATE_KEY_NAME}" "/target/home/$SSH_USER/.ssh/{SSH_PRIVATE_KEY_NAME}"
+    cp "/cdrom/{SSH_KEY_STAGING_DIR}/{SSH_PUBLIC_KEY_NAME}" "/target/home/$SSH_USER/.ssh/{SSH_PUBLIC_KEY_NAME}"
+    chroot /target chown "$SSH_USER:$SSH_USER" "/home/$SSH_USER/.ssh/{SSH_PRIVATE_KEY_NAME}" "/home/$SSH_USER/.ssh/{SSH_PUBLIC_KEY_NAME}"
+    chmod 600 "/target/home/$SSH_USER/.ssh/{SSH_PRIVATE_KEY_NAME}"
+    chmod 644 "/target/home/$SSH_USER/.ssh/{SSH_PUBLIC_KEY_NAME}"
+elif [ ! -f "/target/home/$SSH_USER/.ssh/id_$SSH_KEY_TYPE" ]; then
+    chroot /target ssh-keygen -t "$SSH_KEY_TYPE" -f "/home/$SSH_USER/.ssh/id_$SSH_KEY_TYPE" -N ""
+    chroot /target chown "$SSH_USER:$SSH_USER" "/home/$SSH_USER/.ssh/id_$SSH_KEY_TYPE" "/home/$SSH_USER/.ssh/id_$SSH_KEY_TYPE.pub"
+fi
+
+if [ -d "/cdrom/{WALLPAPER_STAGING_DIR}/wallpapers" ]; then
+    rm -rf /target/usr/share/wallpapers
+    cp -a "/cdrom/{WALLPAPER_STAGING_DIR}/wallpapers" /target/usr/share/wallpapers
+    for plasma_defaults in /target/usr/share/plasma/look-and-feel/*/contents/defaults; do
+        [ -e "$plasma_defaults" ] || continue
+        sed -i 's/^Image=.*/Image=Helix/' "$plasma_defaults"
+    done
+fi
+
+if [ -d "/cdrom/{KWIN_SCRIPT_STAGING_DIR}" ]; then
+    cp -a "/cdrom/{KWIN_SCRIPT_STAGING_DIR}" "/target/tmp/{KWIN_SCRIPT_STAGING_DIR}"
+    for kwin_script in "/target/tmp/{KWIN_SCRIPT_STAGING_DIR}"/*.kwinscript; do
+        [ -e "$kwin_script" ] || continue
+        script_name=$(basename "$kwin_script")
+        chroot /target runuser -u "$USERNAME" -- sh -c 'if command -v kpackagetool6 >/dev/null; then kpackagetool6 --type KWin/Script --install "$1"; elif command -v kpackagetool5 >/dev/null; then kpackagetool5 --type KWin/Script --install "$1"; elif command -v plasmapkg2 >/dev/null; then plasmapkg2 -t kwinscript -i "$1"; fi' sh "/tmp/{KWIN_SCRIPT_STAGING_DIR}/$script_name"
+    done
+    rm -rf "/target/tmp/{KWIN_SCRIPT_STAGING_DIR}"
+fi
+
+chroot /target update-initramfs -c -k all
+chroot /target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck
+chroot /target update-grub
+
+zpool set cachefile=/etc/zfs/zpool.cache "$POOL"
+mkdir -p /target/etc/zfs
+cp /etc/zfs/zpool.cache /target/etc/zfs/zpool.cache
+chroot /target update-initramfs -u -k all
+chroot /target apt-get clean
+
+umount /target/sys/firmware/efi/efivars 2>/dev/null || true
+umount /target/sys /target/proc /target/dev/pts /target/dev
+zfs unmount -a
+zpool export "$POOL"
+
+echo "Helix ZFS root install complete."
+reboot -f
+"""
+
+
+def stage_zfs_root_installer(config: dict, workspace_dir: str, crypted_password: str):
+    """Stages the custom ZFS root installer script into the ISO workspace."""
+    if not uses_zfs_root(config):
+        return
+
+    staging_dir = Path(workspace_dir) / ZFS_STAGING_DIR
+    staging_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
+    script_path = staging_dir / "install.sh"
+    script_path.write_text(zfs_install_script(config, crypted_password))
+    script_path.chmod(0o755)
+    success("Staged ZFS root installer.")
+
+
+def create_zfs_preseed_config(config: dict, workspace_dir: str, crypted_password: str):
+    """Generates a preseed that hands installation to the ZFS root backend."""
+    preseed_config = config.get("preseed", {})
+    failure_diagnostics_preseed = installer_failure_diagnostics_preseed(preseed_config)
+    preseed_content = f"""
+# --- Localization ---
+d-i debian-installer/language string {preseed_config.get('language', 'en')}
+d-i debian-installer/country string {preseed_config.get('country', 'US')}
+d-i debian-installer/locale string {preseed_config.get('locale', 'en_US.UTF-8')}
+d-i keyboard-configuration/xkb-keymap select {preseed_config.get('keyboard_map', 'us')}
+
+# --- Network ---
+d-i netcfg/get_hostname string {preseed_config.get('hostname', 'helix')}
+d-i netcfg/get_domain string {preseed_config.get('domain_name', 'local')}
+d-i hw-detect/load_firmware boolean {debian_bool(preseed_config.get('load_firmware', True))}
+
+# --- User Account ---
+d-i passwd/root-login boolean {debian_bool(preseed_config.get('root_login', False))}
+d-i passwd/make-user boolean {debian_bool(preseed_config.get('make_user', True))}
+d-i passwd/user-fullname string {preseed_config.get('user_fullname', 'User')}
+d-i passwd/username string {preseed_config.get('username', 'user')}
+d-i passwd/user-password-crypted password {crypted_password}
+
+# --- Clock and Timezone ---
+d-i clock-setup/utc boolean {debian_bool(preseed_config.get('clock_utc', True))}
+d-i time/zone string {preseed_config.get('timezone', 'UTC')}
+d-i clock-setup/ntp boolean {debian_bool(preseed_config.get('clock_ntp', True))}
+
+# --- ZFS Root Installer ---
+d-i partman/early_command string /bin/sh /cdrom/{ZFS_STAGING_DIR}/install.sh
+d-i partman/confirm boolean true
+d-i partman/confirm_nooverwrite boolean true{failure_diagnostics_preseed}
+
+# --- Automation ---
+d-i auto-install/enable boolean {debian_bool(preseed_config.get('auto_install', True))}
+d-i debian-installer/priority string {preseed_config.get('installer_priority', 'critical')}
+d-i debconf/priority string {preseed_config.get('debconf_priority', 'critical')}
+    """.strip()
+
+    dest_preseed_path = os.path.join(workspace_dir, INSTALLER_PRESEED_FILENAME)
+    with open(dest_preseed_path, "w") as f:
+        f.write(preseed_content)
+
+
 def create_preseed_config(config: dict, workspace_dir: str, crypted_password: str):
     """Generates the preseed config from the YAML configuration file."""      
+    if uses_zfs_root(config):
+        create_zfs_preseed_config(config, workspace_dir, crypted_password)
+        return
+
     preseed_config = config.get("preseed", {})
     ssh_key_config = config.get("ssh_key", {})
     ssh_user = ssh_key_config.get("user") or preseed_config.get("username", "user")
@@ -845,6 +1132,7 @@ def create(
     stage_current_user_ssh_keys(iso["workspace"], get_ssh_install_user(config), copy_ssh_keys)
     stage_kwin_scripts(config, iso["workspace"], config_dir)
     stage_wallpaper(config, iso["workspace"], config_dir)
+    stage_zfs_root_installer(config, iso["workspace"], crypted_password)
 
     with console.status("[bold green]Generating preseed configuration...[/bold green]"):
         create_preseed_config(config, iso["workspace"], crypted_password)
