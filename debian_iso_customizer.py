@@ -52,6 +52,7 @@ DEFAULT_CONFIG_PATH = "post_install_config.yaml"
 INSTALLER_PRESEED_FILENAME = "preseed.cfg"
 SSH_KEY_STAGING_DIR = "zebian-ssh"
 KWIN_SCRIPT_STAGING_DIR = "zebian-kwin-scripts"
+WALLPAPER_STAGING_DIR = "zebian-wallpaper"
 SSH_PRIVATE_KEY_NAME = "id_ed25519"
 SSH_PUBLIC_KEY_NAME = "id_ed25519.pub"
 SHA512_CRYPT_SALT_CHARS = string.ascii_letters + string.digits + "./"
@@ -285,6 +286,14 @@ d-i grub-installer/only_debian boolean {debian_bool(preseed_config.get('grub_onl
 # --- Final Commands ---                                                      
 d-i preseed/late_command string \\
     in-target install -d -m 700 -o {ssh_user} -g {ssh_user} /home/{ssh_user}/.ssh; \\
+    if [ -d /cdrom/{WALLPAPER_STAGING_DIR}/wallpapers ]; then \\
+        rm -rf /target/usr/share/wallpapers; \\
+        cp -a /cdrom/{WALLPAPER_STAGING_DIR}/wallpapers /target/usr/share/wallpapers; \\
+        for plasma_defaults in /target/usr/share/plasma/look-and-feel/*/contents/defaults; do \\
+            [ -e "$plasma_defaults" ] || continue; \\
+            sed -i 's/^Image=.*/Image=Zebian/' "$plasma_defaults"; \\
+        done; \\
+    fi; \\
     if [ -d /cdrom/{KWIN_SCRIPT_STAGING_DIR} ]; then \\
         cp -a /cdrom/{KWIN_SCRIPT_STAGING_DIR} /target/tmp/{KWIN_SCRIPT_STAGING_DIR}; \\
         for kwin_script in /target/tmp/{KWIN_SCRIPT_STAGING_DIR}/*.kwinscript; do \\
@@ -350,6 +359,54 @@ def stage_kwin_scripts(config: dict, workspace_dir: str, config_dir: Path):
 
     if staged_scripts:
         success(f"Staged KWin scripts: [yellow]{', '.join(staged_scripts)}[/yellow].")
+
+
+def configured_wallpaper(config: dict, config_dir: Path):
+    """Returns the configured wallpaper path from YAML."""
+    wallpaper = config.get("wallpaper")
+    if not wallpaper:
+        return None
+    if isinstance(wallpaper, dict):
+        wallpaper = wallpaper.get("source")
+    if not wallpaper:
+        return None
+
+    wallpaper_path = Path(wallpaper)
+    if not wallpaper_path.is_absolute():
+        wallpaper_path = config_dir / wallpaper_path
+    return wallpaper_path
+
+
+def stage_wallpaper(config: dict, workspace_dir: str, config_dir: Path):
+    """Copies the configured wallpaper into the ISO as the only Plasma wallpaper."""
+    wallpaper_path = configured_wallpaper(config, config_dir)
+    if not wallpaper_path:
+        return
+
+    if not wallpaper_path.exists():
+        warning(f"Wallpaper [yellow]'{wallpaper_path}'[/yellow] not found. Skipping.")
+        return
+
+    staging_dir = Path(workspace_dir) / WALLPAPER_STAGING_DIR
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+
+    wallpaper_package = staging_dir / "wallpapers" / "Zebian"
+    image_dir = wallpaper_package / "contents" / "images"
+    image_dir.mkdir(mode=0o755, parents=True)
+    shutil.copy2(wallpaper_path, image_dir / "wallpaper.jpg")
+    shutil.copy2(wallpaper_path, wallpaper_package / "contents" / "screenshot.jpg")
+    metadata = {
+        "KPlugin": {
+            "Id": "Zebian",
+            "Name": "Zebian",
+            "License": "LicenseRef-Local",
+        }
+    }
+    with open(wallpaper_package / "metadata.json", "w") as f:
+        json.dump(metadata, f, indent=4)
+        f.write("\n")
+    success(f"Staged wallpaper [yellow]'{wallpaper_path.name}'[/yellow].")
 
 
 def update_bootloader_configs(workspace_dir: str):
@@ -642,6 +699,7 @@ def create(
 
     stage_current_user_ssh_keys(iso["workspace"], get_ssh_install_user(config), copy_ssh_keys)
     stage_kwin_scripts(config, iso["workspace"], config_dir)
+    stage_wallpaper(config, iso["workspace"], config_dir)
 
     with console.status("[bold green]Generating preseed configuration...[/bold green]"):
         create_preseed_config(config, iso["workspace"], crypted_password)
