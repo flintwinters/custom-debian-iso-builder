@@ -66,6 +66,12 @@ preseed:
   make_user: true
   user_fullname: "sword"
   username: "sword"
+  default_shell: "/usr/bin/zsh"
+  cleanup_home_files:
+    - ".bashrc"
+    - ".bash_logout"
+    - ".profile"
+    - ".bash_history"
   
   # --- Timezone ---
   clock_utc: true
