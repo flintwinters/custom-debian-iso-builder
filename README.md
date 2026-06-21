@@ -36,6 +36,8 @@ Customization is managed through `helix_config.yaml`:
 - `ssh_key`: SSH key type and optional target user.
 - `preseed`: Debian Installer values such as locale, user, timezone, filesystem, partitioning, and base packages.
 
+The generated guided partitioning preseed supports `ext2`, `ext3`, `ext4`, `xfs`, and `btrfs`. ZFS root installs require a separate custom installer flow and are rejected before ISO extraction.
+
 The install user's password is not stored in YAML. `create` prompts for it, then writes only a SHA-512 crypt hash into the generated installer preseed. For non-interactive runs, pass the plaintext through `--install-password`.
 
 Installer failure diagnostics are enabled by default. If Debian Installer fails, Helix writes `/var/log/helix-installer-diagnostics.tar` in the installer environment, copies it to `/target/root/` when the target filesystem is mounted, and prints the configured syslog tail to the installer console and tty4.
