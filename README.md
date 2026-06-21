@@ -1,4 +1,4 @@
-# Zebian: Custom Debian ISO Creator
+# Helix: Custom Debian ISO Creator
 
 A Python-based CLI tool for building customized Debian netinstall ISOs with a focus on automation and minimal user intervention during installation.
 
@@ -6,7 +6,7 @@ This tool automates the process of modifying a standard Debian ISO from a single
 
 ## Features
 
-- **YAML-Configured Installer**: Uses `post_install_config.yaml` as the user-facing source of truth for ISO paths, Debian installer answers, packages, and SSH key behavior.
+- **YAML-Configured Installer**: Uses `helix_config.yaml` as the user-facing source of truth for ISO paths, Debian installer answers, packages, and SSH key behavior.
 - **Generated Preseed**: Writes the Debian Installer preseed directly into the extracted ISO workspace; it is not edited as a standalone project file.
 - **Optimized Bootloader**: Modifies the ISOLINUX and GRUB bootloaders to default to the unattended installation with a minimal timeout.
 - **CLI Interface**: Built with `Typer` and `Rich` for a modern and user-friendly command-line experience.
@@ -19,7 +19,7 @@ This tool automates the process of modifying a standard Debian ISO from a single
 - **Python**: Version 3.8 or higher.
 - **Required Libraries**: `typer`, `rich`, and `pyyaml`. Install them with:
   ```bash
-  pip install typer rich pyyaml
+  uv sync
   ```
 - **System Utilities**: The `xorriso` package is required for rebuilding the ISO.
   ```bash
@@ -29,7 +29,7 @@ This tool automates the process of modifying a standard Debian ISO from a single
 
 ## Configuration
 
-Customization is managed through `post_install_config.yaml`:
+Customization is managed through `helix_config.yaml`:
 
 - `iso`: Source ISO, extraction workspace, and output ISO path.
 - `packages`: APT packages installed into the target system.
@@ -43,16 +43,16 @@ The install user's password is not stored in YAML. `create` prompts for it, then
 To create the custom ISO, simply run the script from the project's root directory:
 
 ```bash
-uv run python debian_iso_customizer.py create
+uv run python helix_iso_customizer.py create
 ```
 
 For automation:
 
 ```bash
-uv run python debian_iso_customizer.py create --install-password 'password' --no-copy-ssh-keys --no-flash-usb
+uv run python helix_iso_customizer.py create --install-password 'password' --no-copy-ssh-keys --no-flash-usb
 ```
 
-The script will perform all the necessary steps and output the new ISO file as `custom-debian-13.iso`. If a USB drive is connected, it will prompt you to flash the ISO to the drive.
+The script will perform all the necessary steps and output the new ISO file as `helix-debian-13.iso`. If a USB drive is connected, it will prompt you to flash the ISO to the drive.
 
 ## License
 
