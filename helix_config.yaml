@@ -114,6 +114,7 @@ preseed:
     - "ssh-server"
   package_upgrade: "full-upgrade"
   update_policy: "unattended-upgrades"
+  popularity_contest: false
 
   # --- Bootloader ---
   grub_only_debian: true
