@@ -299,6 +299,7 @@ d-i debian-installer/locale string {preseed_config.get('locale', 'en_US.UTF-8')}
 d-i keyboard-configuration/xkb-keymap select {preseed_config.get('keyboard_map', 'us')}                                                                          
                                                                               
 # --- Network ---                                                             
+d-i netcfg/get_hostname string {preseed_config.get('hostname', 'helix')}             
 d-i netcfg/get_domain string {preseed_config.get('domain_name', 'local')}             
 d-i hw-detect/load_firmware boolean {debian_bool(preseed_config.get('load_firmware', True))}                                      
                                                                               
