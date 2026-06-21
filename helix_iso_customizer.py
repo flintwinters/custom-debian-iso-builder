@@ -61,6 +61,7 @@ INSTALLER_BOOT_ARGS = (
     "auto=true priority=critical file=/cdrom/preseed.cfg "
     "preseed/file=/cdrom/preseed.cfg"
 )
+PARTMAN_FILESYSTEMS = {"ext2", "ext3", "ext4", "xfs", "btrfs"}
 
 
 @app.callback()
@@ -134,6 +135,28 @@ def package_list(*package_groups):
 def debian_bool(value: bool):
     """Formats Python booleans for Debian Installer preseed values."""
     return "true" if value else "false"
+
+
+def validate_preseed_config(config: dict):
+    """Rejects YAML settings the generated Debian Installer preseed cannot satisfy."""
+    preseed_config = config.get("preseed", {})
+    filesystem = str(preseed_config.get("filesystem", "ext4")).strip().lower()
+    if filesystem in PARTMAN_FILESYSTEMS:
+        return
+
+    if filesystem == "zfs":
+        error(
+            "ZFS root installs are not supported by the generated partman preseed. "
+            "Use ext4, xfs, or btrfs, or provide a separate custom installer flow for ZFS."
+        )
+        raise typer.Exit(code=1)
+
+    supported_filesystems = ", ".join(sorted(PARTMAN_FILESYSTEMS))
+    error(
+        f"Unsupported filesystem [yellow]'{filesystem}'[/yellow]. "
+        f"Supported generated-preseed filesystems: {supported_filesystems}."
+    )
+    raise typer.Exit(code=1)
 
 
 def installer_failure_diagnostics_preseed(preseed_config: dict):
@@ -802,6 +825,7 @@ def create(
     """
     console.print("[bold cyan]Creating Helix ISO[/bold cyan]")
     config = load_config(config_path)
+    validate_preseed_config(config)
     config_dir = Path(config_path).resolve().parent
     iso = iso_config(config)
 
