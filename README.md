@@ -34,7 +34,9 @@ Customization is managed through `post_install_config.yaml`:
 - `iso`: Source ISO, extraction workspace, and output ISO path.
 - `packages`: APT packages installed into the target system.
 - `ssh_key`: SSH key type and optional target user.
-- `preseed`: Debian Installer values such as locale, user, timezone, partitioning, and base packages.
+- `preseed`: Debian Installer values such as locale, user, timezone, filesystem, partitioning, and base packages.
+
+The install user's password is not stored in YAML. `create` prompts for it, then writes only a SHA-512 crypt hash into the generated installer preseed. For non-interactive runs, pass the plaintext through `--install-password`.
 
 ## Usage
 
@@ -42,6 +44,12 @@ To create the custom ISO, simply run the script from the project's root director
 
 ```bash
 uv run python debian_iso_customizer.py create
+```
+
+For automation:
+
+```bash
+uv run python debian_iso_customizer.py create --install-password 'password' --no-copy-ssh-keys --no-flash-usb
 ```
 
 The script will perform all the necessary steps and output the new ISO file as `custom-debian-13.iso`. If a USB drive is connected, it will prompt you to flash the ISO to the drive.
