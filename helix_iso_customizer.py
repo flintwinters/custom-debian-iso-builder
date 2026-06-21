@@ -132,6 +132,52 @@ def debian_bool(value: bool):
     return "true" if value else "false"
 
 
+def installer_failure_diagnostics_preseed(preseed_config: dict):
+    """Returns preseed entries that preserve installer logs on failure."""
+    if not preseed_config.get("failure_diagnostics", True):
+        return ""
+
+    archive_path = preseed_config.get(
+        "failure_diagnostics_archive",
+        "/var/log/helix-installer-diagnostics.tar",
+    )
+    tail_lines = int(preseed_config.get("failure_diagnostics_tail_lines", 200))
+    target_archive_path = f"/target/root/{Path(archive_path).name}"
+    command = (
+        "diagnostic_dir=/var/log/helix-installer-diagnostics; "
+        "mkdir -p \"$diagnostic_dir\"; "
+        "for log_path in /var/log/syslog /var/log/messages /var/log/debconf.log "
+        "/var/log/partman /var/log/installer /var/log/apt; do "
+        "[ -e \"$log_path\" ] && cp -a \"$log_path\" \"$diagnostic_dir\"/; "
+        "done; "
+        "if [ -d /target/var/log ]; then "
+        "mkdir -p \"$diagnostic_dir/target-var-log\"; "
+        "for log_path in /target/var/log/syslog /target/var/log/installer "
+        "/target/var/log/apt /target/var/log/dpkg.log; do "
+        "[ -e \"$log_path\" ] && cp -a \"$log_path\" \"$diagnostic_dir/target-var-log\"/; "
+        "done; "
+        "fi; "
+        f"tar -cf {shlex.quote(archive_path)} -C /var/log helix-installer-diagnostics; "
+        "if [ -d /target/root ]; then "
+        f"cp {shlex.quote(archive_path)} {shlex.quote(target_archive_path)}; "
+        "fi; "
+        "for console_path in /dev/console /dev/tty4; do "
+        "[ -e \"$console_path\" ] || continue; "
+        "printf '\\nHelix installer failed. Diagnostics archive: "
+        f"{archive_path}"
+        " (also copied to /root if /target is mounted).\\n"
+        f"Last {tail_lines} syslog lines follow.\\n\\n' > \"$console_path\"; "
+        f"tail -n {tail_lines} /var/log/syslog > \"$console_path\" 2>/dev/null || true; "
+        "done"
+    )
+
+    return f"""
+# --- Failure Diagnostics ---
+d-i debian-installer/exit/error_command string \\
+    {command}
+"""
+
+
 def crypt_password(plaintext_password: str):
     """Returns a SHA-512 crypt hash for Debian Installer password preseeding."""
     if not shutil.which("openssl"):
@@ -237,6 +283,7 @@ def create_preseed_config(config: dict, workspace_dir: str, crypted_password: st
     extra_preseed = ""
     if extra_preseed_lines:
         extra_preseed = "\n\n# --- Extra YAML Preseed Entries ---\n" + "\n".join(extra_preseed_lines)
+    failure_diagnostics_preseed = installer_failure_diagnostics_preseed(preseed_config)
                                                                                  
     packages = package_list(
         preseed_config.get("base_packages", []),
@@ -337,7 +384,7 @@ d-i preseed/late_command string \\
     fi; \\
     in-target apt-get clean; \\
     rm -rf /target/var/lib/apt/lists/*;                                     
-d-i finish-install/reboot boolean {debian_bool(preseed_config.get('finish_reboot', True))}{extra_preseed}
+d-i finish-install/reboot boolean {debian_bool(preseed_config.get('finish_reboot', True))}{failure_diagnostics_preseed}{extra_preseed}
 
 # --- Automation ---                                                          
 d-i auto-install/enable boolean {debian_bool(preseed_config.get('auto_install', True))}                                          
