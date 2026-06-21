@@ -51,6 +51,7 @@ DEFAULT_CUSTOM_ISO_NAME = "custom-debian-13.iso"
 DEFAULT_CONFIG_PATH = "post_install_config.yaml"
 INSTALLER_PRESEED_FILENAME = "preseed.cfg"
 SSH_KEY_STAGING_DIR = "zebian-ssh"
+KWIN_SCRIPT_STAGING_DIR = "zebian-kwin-scripts"
 SSH_PRIVATE_KEY_NAME = "id_ed25519"
 SSH_PUBLIC_KEY_NAME = "id_ed25519.pub"
 SHA512_CRYPT_SALT_CHARS = string.ascii_letters + string.digits + "./"
@@ -284,6 +285,14 @@ d-i grub-installer/only_debian boolean {debian_bool(preseed_config.get('grub_onl
 # --- Final Commands ---                                                      
 d-i preseed/late_command string \\
     in-target install -d -m 700 -o {ssh_user} -g {ssh_user} /home/{ssh_user}/.ssh; \\
+    if [ -d /cdrom/{KWIN_SCRIPT_STAGING_DIR} ]; then \\
+        cp -a /cdrom/{KWIN_SCRIPT_STAGING_DIR} /target/tmp/{KWIN_SCRIPT_STAGING_DIR}; \\
+        for kwin_script in /target/tmp/{KWIN_SCRIPT_STAGING_DIR}/*.kwinscript; do \\
+            [ -e "$kwin_script" ] || continue; \\
+            in-target runuser -u {ssh_user} -- plasmapkg2 -t kwinscript -i /tmp/{KWIN_SCRIPT_STAGING_DIR}/$(basename "$kwin_script"); \\
+        done; \\
+        rm -rf /target/tmp/{KWIN_SCRIPT_STAGING_DIR}; \\
+    fi; \\
     if [ -f /cdrom/{SSH_KEY_STAGING_DIR}/{SSH_PRIVATE_KEY_NAME} ] && [ -f /cdrom/{SSH_KEY_STAGING_DIR}/{SSH_PUBLIC_KEY_NAME} ]; then \\
         cp /cdrom/{SSH_KEY_STAGING_DIR}/{SSH_PRIVATE_KEY_NAME} /target/home/{ssh_user}/.ssh/{SSH_PRIVATE_KEY_NAME}; \\
         cp /cdrom/{SSH_KEY_STAGING_DIR}/{SSH_PUBLIC_KEY_NAME} /target/home/{ssh_user}/.ssh/{SSH_PUBLIC_KEY_NAME}; \\
@@ -307,6 +316,40 @@ d-i debconf/priority string {preseed_config.get('debconf_priority', 'critical')}
     dest_preseed_path = os.path.join(workspace_dir, INSTALLER_PRESEED_FILENAME)         
     with open(dest_preseed_path, "w") as f:                                   
         f.write(preseed_content)  
+
+
+def configured_kwin_scripts(config: dict, config_dir: Path):
+    """Returns KWin script package paths from YAML."""
+    script_paths = []
+    for script in config.get("kwin_scripts", []):
+        script_path = Path(script)
+        if not script_path.is_absolute():
+            script_path = config_dir / script_path
+        script_paths.append(script_path)
+    return script_paths
+
+
+def stage_kwin_scripts(config: dict, workspace_dir: str, config_dir: Path):
+    """Copies configured KWin script packages into the ISO workspace."""
+    scripts = configured_kwin_scripts(config, config_dir)
+    if not scripts:
+        return
+
+    staging_dir = Path(workspace_dir) / KWIN_SCRIPT_STAGING_DIR
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+
+    staged_scripts = []
+    for script in scripts:
+        if not script.exists():
+            warning(f"KWin script package [yellow]'{script}'[/yellow] not found. Skipping.")
+            continue
+        staging_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        shutil.copy2(script, staging_dir / script.name)
+        staged_scripts.append(script.name)
+
+    if staged_scripts:
+        success(f"Staged KWin scripts: [yellow]{', '.join(staged_scripts)}[/yellow].")
 
 
 def update_bootloader_configs(workspace_dir: str):
@@ -581,6 +624,7 @@ def create(
     """
     console.print("[bold cyan]Creating custom Debian ISO[/bold cyan]")
     config = load_config(config_path)
+    config_dir = Path(config_path).resolve().parent
     iso = iso_config(config)
 
     with console.status("[bold green]Verifying prerequisites...[/bold green]"):
@@ -597,6 +641,7 @@ def create(
         extract_iso(iso["source"], iso["workspace"])
 
     stage_current_user_ssh_keys(iso["workspace"], get_ssh_install_user(config), copy_ssh_keys)
+    stage_kwin_scripts(config, iso["workspace"], config_dir)
 
     with console.status("[bold green]Generating preseed configuration...[/bold green]"):
         create_preseed_config(config, iso["workspace"], crypted_password)
