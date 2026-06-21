@@ -221,6 +221,13 @@ d-i clock-setup/ntp boolean {debian_bool(preseed_config.get('clock_ntp', True))}
 d-i partman-auto/method string {preseed_config.get('partitioning_method', 'lvm')}     
 d-i partman-auto-lvm/guided_size string {preseed_config.get('partitioning_size',      
 'max')}                                                                         
+d-i partman-auto/choose_recipe select {preseed_config.get('partition_recipe', 'atomic')}                                    
+d-i partman/default_filesystem string {preseed_config.get('filesystem', 'ext4')}                                    
+d-i partman/mount_style select {preseed_config.get('mount_style', 'uuid')}                                    
+d-i partman-md/device_remove_md boolean {debian_bool(preseed_config.get('remove_existing_raid', True))}                 
+d-i partman-lvm/device_remove_lvm boolean {debian_bool(preseed_config.get('remove_existing_lvm', True))}                 
+d-i partman-lvm/confirm boolean {debian_bool(preseed_config.get('confirm_lvm', True))}                 
+d-i partman-lvm/confirm_nooverwrite boolean {debian_bool(preseed_config.get('confirm_lvm_nooverwrite', True))}                 
 d-i partman-partitioning/confirm_write_new_label boolean {debian_bool(preseed_config.get('confirm_write_new_label', True))}                 
 d-i partman/choose_partition select {preseed_config.get('choose_partition', 'finish')}                                    
 d-i partman/confirm boolean {debian_bool(preseed_config.get('confirm_partitioning', True))}                                              
