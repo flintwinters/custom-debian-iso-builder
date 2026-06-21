@@ -40,6 +40,15 @@ kwin_scripts:
 wallpaper:
   source: "wallpaper.jpg"
 
+zfs_root:
+  enabled: true
+  disk: "/dev/sda"
+  pool: "rpool"
+  suite: "trixie"
+  mirror: "http://deb.debian.org/debian"
+  efi_size: "1G"
+  boot_size: "2G"
+
 # --- SSH Key Setup ---
 # If builder keys are not imported, generate this key type for the install user.
 ssh_key:
@@ -86,7 +95,7 @@ preseed:
   partition_recipe: "atomic"
 
   # --- File System ---
-  filesystem: "ext4"
+  filesystem: "zfs"
   mount_style: "uuid"
   remove_existing_raid: true
   remove_existing_lvm: true
