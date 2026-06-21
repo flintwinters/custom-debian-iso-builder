@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+
+*.iso
+iso-extract/
+iso-extract.stale/
+iso-extract.stale-*/
