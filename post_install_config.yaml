@@ -43,13 +43,11 @@ preseed:
 
   # --- User Account ---
   # The default user to be created.
-  # Note: The password should be a crypted hash.
-  # To generate: mkpasswd -m sha-512
+  # The password is supplied by prompt or --install-password at create time.
   root_login: false
   make_user: true
   user_fullname: "sword"
   username: "sword"
-  crypted_password: "$6$qfs.xL21$1a.fT6T0p5jF.oE5a/T31gS/v4l7b2a.zP2c.Y3a.Z1" # Default: "password"
   
   # --- Timezone ---
   clock_utc: true
