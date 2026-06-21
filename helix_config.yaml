@@ -92,8 +92,15 @@ preseed:
   confirm_nooverwrite: true
 
   # --- APT ---
+  apt_use_mirror: true
+  mirror_country: "manual"
+  mirror_hostname: "deb.debian.org"
+  mirror_directory: "/debian"
+  mirror_proxy: ""
   apt_non_free: true
   apt_contrib: true
+  apt_non_free_firmware: true
+  install_recommends: false
 
   # --- Base Packages ---
   # Packages to be installed during the initial setup.
