@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-debian_iso_customizer.py
+helix_iso_customizer.py
 
-A comprehensive utility for automating the customization of Debian network installation ISOs.
+A utility for building Helix Debian network installation ISOs.
 
 This script orchestrates the entire lifecycle of Debian ISO modification:
 1.  Verification of system prerequisites (e.g., `xorriso`).
@@ -37,8 +37,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 # --- Typer App and Rich Console Initialization ---
 app = typer.Typer(
-    name="debian-customizer",
-    help="A CLI tool to create custom Debian ISOs with unattended installation.",
+    name="helix",
+    help="Create Helix Debian ISOs with unattended installation.",
     add_completion=False,
     no_args_is_help=True
 )
@@ -47,12 +47,12 @@ console = Console()
 # --- Constants & Configuration ---
 DEFAULT_SOURCE_ISO_PATH = "debian-13.0.0-amd64-netinst.iso"
 DEFAULT_WORKSPACE_DIR = "iso-extract"
-DEFAULT_CUSTOM_ISO_NAME = "custom-debian-13.iso"
-DEFAULT_CONFIG_PATH = "post_install_config.yaml"
+DEFAULT_CUSTOM_ISO_NAME = "helix-debian-13.iso"
+DEFAULT_CONFIG_PATH = "helix_config.yaml"
 INSTALLER_PRESEED_FILENAME = "preseed.cfg"
-SSH_KEY_STAGING_DIR = "zebian-ssh"
-KWIN_SCRIPT_STAGING_DIR = "zebian-kwin-scripts"
-WALLPAPER_STAGING_DIR = "zebian-wallpaper"
+SSH_KEY_STAGING_DIR = "helix-ssh"
+KWIN_SCRIPT_STAGING_DIR = "helix-kwin-scripts"
+WALLPAPER_STAGING_DIR = "helix-wallpaper"
 SSH_PRIVATE_KEY_NAME = "id_ed25519"
 SSH_PUBLIC_KEY_NAME = "id_ed25519.pub"
 SHA512_CRYPT_SALT_CHARS = string.ascii_letters + string.digits + "./"
@@ -291,7 +291,7 @@ d-i preseed/late_command string \\
         cp -a /cdrom/{WALLPAPER_STAGING_DIR}/wallpapers /target/usr/share/wallpapers; \\
         for plasma_defaults in /target/usr/share/plasma/look-and-feel/*/contents/defaults; do \\
             [ -e "$plasma_defaults" ] || continue; \\
-            sed -i 's/^Image=.*/Image=Zebian/' "$plasma_defaults"; \\
+            sed -i 's/^Image=.*/Image=Helix/' "$plasma_defaults"; \\
         done; \\
     fi; \\
     if [ -d /cdrom/{KWIN_SCRIPT_STAGING_DIR} ]; then \\
@@ -391,15 +391,15 @@ def stage_wallpaper(config: dict, workspace_dir: str, config_dir: Path):
     if staging_dir.exists():
         shutil.rmtree(staging_dir)
 
-    wallpaper_package = staging_dir / "wallpapers" / "Zebian"
+    wallpaper_package = staging_dir / "wallpapers" / "Helix"
     image_dir = wallpaper_package / "contents" / "images"
     image_dir.mkdir(mode=0o755, parents=True)
     shutil.copy2(wallpaper_path, image_dir / "wallpaper.jpg")
     shutil.copy2(wallpaper_path, wallpaper_package / "contents" / "screenshot.jpg")
     metadata = {
         "KPlugin": {
-            "Id": "Zebian",
-            "Name": "Zebian",
+            "Id": "Helix",
+            "Name": "Helix",
             "License": "LicenseRef-Local",
         }
     }
@@ -679,7 +679,7 @@ def create(
     """
     Builds a customized Debian ISO with unattended installation.
     """
-    console.print("[bold cyan]Creating custom Debian ISO[/bold cyan]")
+    console.print("[bold cyan]Creating Helix ISO[/bold cyan]")
     config = load_config(config_path)
     config_dir = Path(config_path).resolve().parent
     iso = iso_config(config)
