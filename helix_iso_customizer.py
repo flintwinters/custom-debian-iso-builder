@@ -426,6 +426,14 @@ def update_bootloader_configs(workspace_dir: str):
     with open(isolinux_cfg_path, "r") as f:
         original_isolinux_content = f.read()
 
+    conflicting_isolinux_directives = ("default ", "prompt ", "timeout ", "ontimeout ")
+    preserved_isolinux_lines = [
+        line
+        for line in original_isolinux_content.splitlines()
+        if not line.lower().startswith(conflicting_isolinux_directives)
+    ]
+    preserved_isolinux_content = "\n".join(preserved_isolinux_lines)
+
     # Create new default entry and prepend it
     isolinux_autoinstall_config = """
 DEFAULT autoinstall
@@ -439,7 +447,7 @@ LABEL autoinstall
     APPEND initrd=/install.amd/initrd.gz --- quiet auto=true priority=critical preseed/file=/cdrom/preseed.cfg
     """.strip()
 
-    modified_isolinux_content = f"{isolinux_autoinstall_config}\n{original_isolinux_content}"
+    modified_isolinux_content = f"{isolinux_autoinstall_config}\n{preserved_isolinux_content}"
     with open(isolinux_cfg_path, "w") as f:
         f.write(modified_isolinux_content)
 
