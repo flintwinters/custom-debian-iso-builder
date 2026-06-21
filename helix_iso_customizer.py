@@ -30,6 +30,7 @@ import yaml
 import json
 import secrets
 import string
+import shlex
 from pathlib import Path
 from typing import Optional
 from rich.console import Console
@@ -220,6 +221,17 @@ def create_preseed_config(config: dict, workspace_dir: str, crypted_password: st
     ssh_user = ssh_key_config.get("user") or preseed_config.get("username", "user")
     ssh_key_type = ssh_key_config.get("type", "ed25519")
     generated_key_path = f"/home/{ssh_user}/.ssh/id_{ssh_key_type}"
+    default_shell = preseed_config.get("default_shell", "/usr/bin/zsh")
+    cleanup_home_files = preseed_config.get(
+        "cleanup_home_files",
+        [".bashrc", ".bash_logout", ".profile", ".bash_history"],
+    )
+    shell_packages = ["zsh"] if Path(default_shell).name == "zsh" else []
+    cleanup_home_paths = " ".join(
+        shlex.quote(f"/target/home/{ssh_user}/{cleanup_file}")
+        for cleanup_file in cleanup_home_files
+    )
+    cleanup_home_command = f"rm -f {cleanup_home_paths}" if cleanup_home_paths else "true"
     tasks = ", ".join(preseed_config.get("tasks", ["ssh-server"]))
     extra_preseed_lines = preseed_config.get("extra", [])
     extra_preseed = ""
@@ -228,6 +240,7 @@ def create_preseed_config(config: dict, workspace_dir: str, crypted_password: st
                                                                                  
     packages = package_list(
         preseed_config.get("base_packages", []),
+        shell_packages,
         config.get("packages", []),
     )
                                                                                  
@@ -294,6 +307,8 @@ d-i grub-installer/only_debian boolean {debian_bool(preseed_config.get('grub_onl
 # --- Final Commands ---                                                      
 d-i preseed/late_command string \\
     in-target install -d -m 700 -o {ssh_user} -g {ssh_user} /home/{ssh_user}/.ssh; \\
+    in-target usermod --shell {shlex.quote(default_shell)} {ssh_user}; \\
+    {cleanup_home_command}; \\
     if [ -d /cdrom/{WALLPAPER_STAGING_DIR}/wallpapers ]; then \\
         rm -rf /target/usr/share/wallpapers; \\
         cp -a /cdrom/{WALLPAPER_STAGING_DIR}/wallpapers /target/usr/share/wallpapers; \\
