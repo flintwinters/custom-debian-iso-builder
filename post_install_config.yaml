@@ -24,6 +24,7 @@ packages:
   - xserver-xorg
   - xwayland
   - sddm
+  - plasma-framework
   - plasma-desktop
   - plasma-workspace
   - plasma-workspace-wayland
@@ -32,6 +33,9 @@ packages:
   - systemsettings
   - plasma-nm
   - plasma-pa
+
+kwin_scripts:
+  - "krohnkite.kwinscript"
 
 # --- SSH Key Setup ---
 # If builder keys are not imported, generate this key type for the install user.
